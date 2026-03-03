@@ -1,0 +1,179 @@
+{
+  "projectType": "saas",
+  "projectName": "Rexec",
+  "projectDescription": "Terminal as a Service - instantly-available, network-isolated Linux terminals in the cloud with container management, SSH access, and remote agent support",
+  "theme": "aspen",
+  "primaryColor": "#2563eb",
+  "lightColor": "#60a5fa",
+  "darkColor": "#1e40af",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/docker-compose",
+              "deployment/standalone",
+              "deployment/paas",
+              "deployment/configuration"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/cloud-terminals",
+              "features/agents",
+              "features/collaboration",
+              "features/session-recording",
+              "features/security"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/authentication",
+              "guides/container-management",
+              "guides/file-operations",
+              "guides/embedding"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "SDKs",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "sdks/overview",
+              "sdks/quickstart",
+              "sdks/authentication"
+            ]
+          },
+          {
+            "group": "Language SDKs",
+            "pages": [
+              "sdks/go",
+              "sdks/javascript",
+              "sdks/python",
+              "sdks/rust",
+              "sdks/ruby",
+              "sdks/java",
+              "sdks/dotnet",
+              "sdks/php"
+            ]
+          },
+          {
+            "group": "SDK Guides",
+            "pages": [
+              "sdks/use-cases",
+              "sdks/error-handling",
+              "sdks/best-practices"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI & Tools",
+        "groups": [
+          {
+            "group": "CLI",
+            "pages": [
+              "cli/installation",
+              "cli/authentication",
+              "cli/terminal-management",
+              "cli/file-operations"
+            ]
+          },
+          {
+            "group": "Agent",
+            "pages": [
+              "agent/overview",
+              "agent/installation",
+              "agent/configuration",
+              "agent/troubleshooting"
+            ]
+          },
+          {
+            "group": "Additional Tools",
+            "pages": [
+              "tools/tui",
+              "tools/ssh-gateway"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/introduction",
+              "api/authentication",
+              "api/rate-limits"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/containers",
+              "api/files",
+              "api/terminals",
+              "api/agents",
+              "api/users"
+            ]
+          },
+          {
+            "group": "WebSocket",
+            "pages": [
+              "api/websocket-protocol",
+              "api/terminal-sessions"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Instant cloud terminals with Docker-powered sandboxes",
+    "Connect any machine (BYOS) with lightweight agent",
+    "Real-time WebSocket terminal streaming with xterm.js",
+    "Secure by default with JWT auth, MFA, and audit logging",
+    "Terminal session recording and replay",
+    "Multi-language SDKs (Go, JS/TS, Python, Rust, Ruby, Java, .NET, PHP)",
+    "CLI tools for terminal management and automation",
+    "SSH gateway for traditional SSH access",
+    "Stripe-backed billing integration"
+  ],
+  "publicApiSurface": [
+    "POST /api/containers - Create container",
+    "GET /api/containers - List containers",
+    "GET /api/containers/:id - Get container details",
+    "DELETE /api/containers/:id - Delete container",
+    "POST /api/containers/:id/start - Start container",
+    "POST /api/containers/:id/stop - Stop container",
+    "GET /api/containers/:id/files/list - List files",
+    "POST /api/containers/:id/files - Upload file",
+    "GET /api/containers/:id/files - Download file",
+    "DELETE /api/containers/:id/files - Delete file",
+    "POST /api/agents/register - Register agent",
+    "DELETE /api/agents/:id - Unregister agent",
+    "WS /ws/terminal/:containerId - Terminal WebSocket",
+    "WS /ws/agent/:agentId - Agent WebSocket",
+    "rexec-cli - Command-line interface",
+    "rexec-agent - Remote machine agent",
+    "rexec-tui - Terminal UI dashboard",
+    "rexec-ssh - SSH gateway server"
+  ]
+}
