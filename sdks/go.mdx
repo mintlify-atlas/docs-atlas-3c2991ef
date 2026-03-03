@@ -1,0 +1,572 @@
+---
+title: Go SDK
+description: Official Go SDK for Rexec - Build container orchestration and remote execution features with idiomatic Go
+---
+
+## Installation
+
+Install the Go SDK using `go get`:
+
+```bash
+go get github.com/PipeOpsHQ/rexec-go
+```
+
+**Requirements:** Go 1.19 or later
+
+## Quick Start
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    rexec "github.com/PipeOpsHQ/rexec-go"
+)
+
+func main() {
+    // Create client
+    client := rexec.NewClient(
+        "https://your-rexec-instance.com",
+        "your-api-token"
+    )
+
+    ctx := context.Background()
+
+    // Create a container
+    container, err := client.Containers.Create(ctx, &rexec.CreateContainerRequest{
+        Image: "ubuntu:24.04",
+        Name:  "my-sandbox",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("Created container: %s\n", container.ID)
+
+    // Connect to terminal
+    term, err := client.Terminal.Connect(ctx, container.ID)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer term.Close()
+
+    // Send a command
+    term.Write([]byte("echo 'Hello from Rexec!'\n"))
+
+    // Read output
+    output, _ := term.Read()
+    fmt.Printf("Output: %s\n", output)
+
+    // Clean up
+    client.Containers.Delete(ctx, container.ID)
+}
+```
+
+## Client Initialization
+
+### Creating a Client
+
+The client handles authentication and maintains HTTP connections to the Rexec API:
+
+```go
+import rexec "github.com/PipeOpsHQ/rexec-go"
+
+// Basic client creation
+client := rexec.NewClient(baseURL, apiToken)
+```
+
+### Custom HTTP Client
+
+You can provide a custom `http.Client` for advanced configuration:
+
+```go
+import (
+    "net/http"
+    "time"
+    rexec "github.com/PipeOpsHQ/rexec-go"
+)
+
+client := rexec.NewClient(baseURL, apiToken)
+client.SetHTTPClient(&http.Client{
+    Timeout: 60 * time.Second,
+    Transport: &http.Transport{
+        MaxIdleConns: 100,
+    },
+})
+```
+
+## Container Operations
+
+The `ContainerService` provides methods for managing sandboxed environments.
+
+### Create Container
+
+<CodeGroup>
+```go Basic Creation
+container, err := client.Containers.Create(ctx, &rexec.CreateContainerRequest{
+    Image: "ubuntu:24.04",
+})
+```
+
+```go With Options
+container, err := client.Containers.Create(ctx, &rexec.CreateContainerRequest{
+    Image: "ubuntu:24.04",
+    Name:  "my-sandbox",
+    Environment: map[string]string{
+        "MY_VAR":  "value",
+        "API_KEY": os.Getenv("API_KEY"),
+    },
+    Labels: map[string]string{
+        "project": "demo",
+        "owner":   "engineering",
+    },
+})
+```
+</CodeGroup>
+
+### List Containers
+
+```go
+containers, err := client.Containers.List(ctx)
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, c := range containers {
+    fmt.Printf("%s: %s (status: %s)\n", c.ID, c.Name, c.Status)
+}
+```
+
+### Get Container
+
+```go
+container, err := client.Containers.Get(ctx, containerID)
+if err != nil {
+    if apiErr, ok := err.(*rexec.APIError); ok {
+        fmt.Printf("API Error %d: %s\n", apiErr.StatusCode, apiErr.Message)
+    }
+    log.Fatal(err)
+}
+
+fmt.Printf("Container: %s\n", container.Name)
+fmt.Printf("Status: %s\n", container.Status)
+fmt.Printf("Created: %s\n", container.CreatedAt)
+```
+
+### Lifecycle Management
+
+<CodeGroup>
+```go Start
+err := client.Containers.Start(ctx, containerID)
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+```go Stop
+err := client.Containers.Stop(ctx, containerID)
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+```go Delete
+err := client.Containers.Delete(ctx, containerID)
+if err != nil {
+    log.Fatal(err)
+}
+```
+</CodeGroup>
+
+## File Operations
+
+The `FileService` enables file management within containers.
+
+### List Files
+
+```go
+files, err := client.Files.List(ctx, containerID, "/home")
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, f := range files {
+    icon := "📄"
+    if f.IsDir {
+        icon = "📁"
+    }
+    fmt.Printf("%s %s (%d bytes)\n", icon, f.Name, f.Size)
+}
+```
+
+### Download Files
+
+```go
+data, err := client.Files.Download(ctx, containerID, "/etc/passwd")
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Printf("File contents:\n%s\n", string(data))
+
+// Save to local file
+err = os.WriteFile("passwd.txt", data, 0644)
+```
+
+### Create Directory
+
+```go
+err := client.Files.Mkdir(ctx, containerID, "/home/mydir")
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+## Terminal Connections
+
+The `TerminalService` provides WebSocket-based terminal access with full PTY support.
+
+### Connect to Terminal
+
+```go
+term, err := client.Terminal.Connect(ctx, containerID)
+if err != nil {
+    log.Fatal(err)
+}
+defer term.Close()
+```
+
+### Send Commands
+
+```go
+// Send a simple command
+term.Write([]byte("ls -la\n"))
+
+// Send multiple commands
+commands := []string{
+    "cd /app\n",
+    "npm install\n",
+    "npm start\n",
+}
+
+for _, cmd := range commands {
+    if err := term.Write([]byte(cmd)); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+### Read Output
+
+```go
+// Read once
+output, err := term.Read()
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Print(string(output))
+
+// Read continuously
+for {
+    output, err := term.Read()
+    if err != nil {
+        break
+    }
+    fmt.Print(string(output))
+}
+```
+
+### Resize Terminal
+
+```go
+// Resize to 120 columns x 40 rows
+err := term.Resize(120, 40)
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+## Error Handling
+
+The SDK provides structured error handling:
+
+```go
+container, err := client.Containers.Get(ctx, "invalid-id")
+if err != nil {
+    // Check if it's an API error
+    if apiErr, ok := err.(*rexec.APIError); ok {
+        switch apiErr.StatusCode {
+        case 404:
+            fmt.Println("Container not found")
+        case 401:
+            fmt.Println("Authentication failed")
+        default:
+            fmt.Printf("API Error %d: %s\n", apiErr.StatusCode, apiErr.Message)
+        }
+        return
+    }
+    
+    // Network or other error
+    log.Fatal(err)
+}
+```
+
+## Context Support
+
+All API methods accept a `context.Context` for cancellation and timeouts:
+
+```go
+import (
+    "context"
+    "time"
+)
+
+// With timeout
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+
+container, err := client.Containers.Create(ctx, &rexec.CreateContainerRequest{
+    Image: "ubuntu:24.04",
+})
+
+// With cancellation
+ctx, cancel := context.WithCancel(context.Background())
+go func() {
+    <-stopSignal
+    cancel()
+}()
+
+containers, err := client.Containers.List(ctx)
+```
+
+## Complete Examples
+
+### CI/CD Test Runner
+
+```go
+func runTests(client *rexec.Client, image string) error {
+    ctx := context.Background()
+
+    // Create test container
+    container, err := client.Containers.Create(ctx, &rexec.CreateContainerRequest{
+        Image: image,
+        Environment: map[string]string{
+            "CI": "true",
+        },
+    })
+    if err != nil {
+        return err
+    }
+    defer client.Containers.Delete(ctx, container.ID)
+
+    // Start container
+    if err := client.Containers.Start(ctx, container.ID); err != nil {
+        return err
+    }
+
+    // Connect to terminal
+    term, err := client.Terminal.Connect(ctx, container.ID)
+    if err != nil {
+        return err
+    }
+    defer term.Close()
+
+    // Run tests
+    term.Write([]byte("npm install && npm test\n"))
+
+    // Capture output
+    var output []byte
+    for {
+        data, err := term.Read()
+        if err != nil {
+            break
+        }
+        output = append(output, data...)
+        fmt.Print(string(data))
+    }
+
+    return nil
+}
+```
+
+### Automated Database Migration
+
+```go
+func TestDatabaseMigrations(t *testing.T) {
+    client := rexec.NewClient(os.Getenv("REXEC_URL"), os.Getenv("REXEC_TOKEN"))
+    ctx := context.Background()
+
+    container, err := client.Containers.Create(ctx, &rexec.CreateContainerRequest{
+        Image: "postgres:16",
+        Environment: map[string]string{
+            "POSTGRES_PASSWORD": "test",
+        },
+    })
+    require.NoError(t, err)
+    defer client.Containers.Delete(ctx, container.ID)
+
+    client.Containers.Start(ctx, container.ID)
+    
+    // Wait for postgres to be ready
+    time.Sleep(5 * time.Second)
+    
+    // Connect and run migration
+    term, err := client.Terminal.Connect(ctx, container.ID)
+    require.NoError(t, err)
+    defer term.Close()
+    
+    term.Write([]byte("psql -U postgres -c 'CREATE DATABASE testdb;'\n"))
+    output, _ := term.Read()
+    
+    assert.Contains(t, string(output), "CREATE DATABASE")
+}
+```
+
+### Remote Development Environment
+
+```go
+func createDevEnvironment(client *rexec.Client, userID string) (*rexec.Container, error) {
+    ctx := context.Background()
+
+    // Create container
+    container, err := client.Containers.Create(ctx, &rexec.CreateContainerRequest{
+        Image: "ubuntu:24.04",
+        Name:  fmt.Sprintf("dev-%s", userID),
+        Environment: map[string]string{
+            "EDITOR": "vim",
+            "TERM":   "xterm-256color",
+        },
+        Labels: map[string]string{
+            "user": userID,
+            "type": "development",
+        },
+    })
+    if err != nil {
+        return nil, err
+    }
+
+    // Start container
+    if err := client.Containers.Start(ctx, container.ID); err != nil {
+        return nil, err
+    }
+
+    // Install dev tools
+    term, err := client.Terminal.Connect(ctx, container.ID)
+    if err != nil {
+        return nil, err
+    }
+    defer term.Close()
+
+    term.Write([]byte("apt-get update && apt-get install -y git vim curl\n"))
+
+    return container, nil
+}
+```
+
+## API Reference
+
+### Types
+
+<ParamField path="Container" type="struct">
+  Represents a container instance.
+  
+  <ParamField path="ID" type="string">Container unique identifier</ParamField>
+  <ParamField path="Name" type="string">Container name</ParamField>
+  <ParamField path="Image" type="string">Docker image used</ParamField>
+  <ParamField path="Status" type="string">Current status (running, stopped, creating, error)</ParamField>
+  <ParamField path="CreatedAt" type="time.Time">Creation timestamp</ParamField>
+  <ParamField path="StartedAt" type="*time.Time">Start timestamp (if running)</ParamField>
+  <ParamField path="Labels" type="map[string]string">Container labels</ParamField>
+  <ParamField path="Environment" type="map[string]string">Environment variables</ParamField>
+</ParamField>
+
+<ParamField path="CreateContainerRequest" type="struct">
+  Request to create a new container.
+  
+  <ParamField path="Image" type="string" required>Docker image to use</ParamField>
+  <ParamField path="Name" type="string">Optional container name</ParamField>
+  <ParamField path="Environment" type="map[string]string">Environment variables</ParamField>
+  <ParamField path="Labels" type="map[string]string">Container labels</ParamField>
+</ParamField>
+
+<ParamField path="FileInfo" type="struct">
+  File or directory metadata.
+  
+  <ParamField path="Name" type="string">File name</ParamField>
+  <ParamField path="Path" type="string">Full path</ParamField>
+  <ParamField path="Size" type="int64">File size in bytes</ParamField>
+  <ParamField path="Mode" type="string">File mode/permissions</ParamField>
+  <ParamField path="ModTime" type="time.Time">Modification time</ParamField>
+  <ParamField path="IsDir" type="bool">Whether this is a directory</ParamField>
+</ParamField>
+
+<ParamField path="APIError" type="struct">
+  API error response.
+  
+  <ParamField path="StatusCode" type="int">HTTP status code</ParamField>
+  <ParamField path="Message" type="string">Error message</ParamField>
+</ParamField>
+
+### Services
+
+**ContainerService** - Access via `client.Containers`
+- `List(ctx) ([]Container, error)` - List all containers
+- `Get(ctx, id) (*Container, error)` - Get container by ID
+- `Create(ctx, req) (*Container, error)` - Create a container
+- `Delete(ctx, id) error` - Delete a container
+- `Start(ctx, id) error` - Start a container
+- `Stop(ctx, id) error` - Stop a container
+
+**FileService** - Access via `client.Files`
+- `List(ctx, containerID, path) ([]FileInfo, error)` - List files
+- `Download(ctx, containerID, path) ([]byte, error)` - Download a file
+- `Mkdir(ctx, containerID, path) error` - Create directory
+
+**TerminalService** - Access via `client.Terminal`
+- `Connect(ctx, containerID) (*Terminal, error)` - Connect to terminal
+
+**Terminal** methods:
+- `Write(data []byte) error` - Send data to terminal
+- `Read() ([]byte, error)` - Read output from terminal
+- `Resize(cols, rows int) error` - Resize terminal
+- `Close() error` - Close connection
+
+## Best Practices
+
+<Note>
+**Reuse Clients** - Create one client instance and reuse it throughout your application to leverage connection pooling.
+</Note>
+
+<Note>
+**Always Use Context** - Pass appropriate contexts for cancellation and timeout control.
+</Note>
+
+<Note>
+**Clean Up Resources** - Always delete containers when done to free resources:
+```go
+defer client.Containers.Delete(ctx, container.ID)
+```
+</Note>
+
+<Note>
+**Handle Errors** - Check for `*rexec.APIError` to handle API-specific errors gracefully.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="JavaScript SDK" icon="js" href="/sdks/javascript">
+    Explore the JavaScript/TypeScript SDK
+  </Card>
+  <Card title="Python SDK" icon="python" href="/sdks/python">
+    Check out the Python SDK
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    View complete API documentation
+  </Card>
+  <Card title="Examples" icon="code" href="/examples">
+    Browse more code examples
+  </Card>
+</CardGroup>

@@ -1,0 +1,786 @@
+---
+title: 'Configuration Reference'
+description: 'Complete reference for all Rexec environment variables and configuration options'
+---
+
+## Overview
+
+Rexec is configured entirely through environment variables. This guide covers all available options with descriptions, defaults, and examples.
+
+<Note>
+  All environment variables can be set in a `.env` file or passed directly to the process.
+</Note>
+
+## Server Configuration
+
+<ParamField path="PORT" type="integer" default="8080">
+  HTTP port for the API server.
+  
+  ```bash
+  PORT=8080
+  ```
+</ParamField>
+
+<ParamField path="BASE_URL" type="string" required>
+  Base URL of the API server. Used for generating links and redirects.
+  
+  ```bash
+  BASE_URL=http://localhost:8080
+  # Production
+  BASE_URL=https://rexec.example.com
+  ```
+</ParamField>
+
+<ParamField path="GIN_MODE" type="string" default="debug">
+  Gin web framework mode. Set to `release` for production.
+  
+  Options:
+  - `debug` - Verbose logging, stack traces
+  - `release` - Production mode, minimal logging
+  
+  ```bash
+  GIN_MODE=release
+  ```
+</ParamField>
+
+<ParamField path="REXEC_APP_URL" type="string" default="http://localhost:5173">
+  URL of the frontend application. Only needed when running frontend separately in development.
+  
+  ```bash
+  # Development
+  REXEC_APP_URL=http://localhost:5173
+  
+  # Production (same as BASE_URL)
+  REXEC_APP_URL=https://rexec.example.com
+  ```
+</ParamField>
+
+<ParamField path="REXEC_WS_HOST" type="string" default="localhost:8080">
+  WebSocket host for terminal connections. Used for port forwarding.
+  
+  ```bash
+  REXEC_WS_HOST=rexec.example.com:443
+  ```
+</ParamField>
+
+<ParamField path="WEB_DIR" type="string" default="web">
+  Directory containing static web assets.
+  
+  ```bash
+  WEB_DIR=web
+  ```
+</ParamField>
+
+## Security Configuration
+
+<ParamField path="JWT_SECRET" type="string" required>
+  Secret key for signing JWT authentication tokens. Must be a secure random string.
+  
+  **Generate with:**
+  ```bash
+  openssl rand -base64 32
+  ```
+  
+  **Example:**
+  ```bash
+  JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
+  ```
+  
+  <Warning>
+    Never commit this to version control. Use a secrets manager in production.
+  </Warning>
+</ParamField>
+
+<ParamField path="REXEC_ENCRYPTION_KEY" type="string" required>
+  Encryption key for sensitive data storage. Must be exactly 16, 24, or 32 characters (bytes) for AES encryption.
+  
+  **Generate with:**
+  ```bash
+  openssl rand -base64 32 | head -c 32
+  ```
+  
+  **Example:**
+  ```bash
+  REXEC_ENCRYPTION_KEY=rexec-dev-key-do-not-use-in-prod
+  ```
+  
+  <Warning>
+    For production, generate a strong random key. The development default is insecure.
+  </Warning>
+</ParamField>
+
+<ParamField path="ALLOWED_ORIGINS" type="string" default="*">
+  Comma-separated list of allowed CORS origins for WebSocket connections.
+  
+  ```bash
+  # Development
+  ALLOWED_ORIGINS=http://localhost:5173,http://localhost:8080
+  
+  # Production
+  ALLOWED_ORIGINS=https://rexec.example.com,https://app.rexec.example.com
+  ```
+  
+  <Note>
+    Always restrict this to your actual domains in production.
+  </Note>
+</ParamField>
+
+<ParamField path="BLOCK_EMPTY_ORIGIN" type="boolean" default="false">
+  Block WebSocket connections with empty Origin headers (e.g., CLI tools).
+  
+  ```bash
+  BLOCK_EMPTY_ORIGIN=false
+  ```
+  
+  Set to `true` if you want to block non-browser clients.
+</ParamField>
+
+## Database Configuration
+
+<ParamField path="DATABASE_URL" type="string" required>
+  PostgreSQL connection string.
+  
+  **Format:**
+  ```
+  postgres://user:password@host:port/database?sslmode=disable
+  ```
+  
+  **Examples:**
+  ```bash
+  # Local development
+  DATABASE_URL=postgres://rexec:rexec@localhost:5432/rexec?sslmode=disable
+  
+  # Production with SSL
+  DATABASE_URL=postgres://user:pass@db.example.com:5432/rexec?sslmode=require
+  
+  # Railway/Render (auto-provided)
+  DATABASE_URL=${DATABASE_URL}
+  ```
+</ParamField>
+
+<ParamField path="REDIS_URL" type="string">
+  Redis connection string. Highly recommended for production, required for horizontal scaling.
+  
+  **Format:**
+  ```
+  redis://[user:password@]host:port[/database]
+  ```
+  
+  **Examples:**
+  ```bash
+  # Local development
+  REDIS_URL=redis://localhost:6379
+  
+  # Production with auth
+  REDIS_URL=redis://default:password@redis.example.com:6379
+  
+  # Upstash
+  REDIS_URL=rediss://default:password@region.upstash.io:6379
+  ```
+  
+  <Note>
+    Used for session management, Pub/Sub, and caching. Without Redis, sessions are stored in memory and won't persist across restarts.
+  </Note>
+</ParamField>
+
+## Docker Configuration
+
+<ParamField path="DOCKER_HOST" type="string" default="unix:///var/run/docker.sock">
+  Docker daemon endpoint.
+  
+  **Options:**
+  ```bash
+  # Local Docker socket (default)
+  DOCKER_HOST=unix:///var/run/docker.sock
+  
+  # Remote Docker over TLS
+  DOCKER_HOST=tcp://docker-host.example.com:2376
+  
+  # Remote Docker over SSH
+  DOCKER_HOST=ssh://user@docker-host.example.com
+  ```
+</ParamField>
+
+<ParamField path="DOCKER_TLS_VERIFY" type="string" default="0">
+  Enable TLS verification for remote Docker connections.
+  
+  ```bash
+  DOCKER_TLS_VERIFY=1
+  ```
+  
+  <Warning>
+    Always use TLS (`1`) for remote Docker connections in production.
+  </Warning>
+</ParamField>
+
+<ParamField path="DOCKER_CA_CERT" type="string">
+  CA certificate content for TLS verification (PEM format).
+  
+  ```bash
+  DOCKER_CA_CERT="$(cat ca.pem)"
+  ```
+  
+  Or set the file path with `DOCKER_CERT_PATH`.
+</ParamField>
+
+<ParamField path="DOCKER_CLIENT_CERT" type="string">
+  Client certificate content for TLS authentication (PEM format).
+  
+  ```bash
+  DOCKER_CLIENT_CERT="$(cat cert.pem)"
+  ```
+</ParamField>
+
+<ParamField path="DOCKER_CLIENT_KEY" type="string">
+  Client private key content for TLS authentication (PEM format).
+  
+  ```bash
+  DOCKER_CLIENT_KEY="$(cat key.pem)"
+  ```
+</ParamField>
+
+<ParamField path="DOCKER_CERT_PATH" type="string" default="~/.docker">
+  Path to directory containing TLS certificates (`ca.pem`, `cert.pem`, `key.pem`).
+  
+  ```bash
+  DOCKER_CERT_PATH=/home/rexec/.docker
+  ```
+  
+  Alternative to setting `DOCKER_CA_CERT`, `DOCKER_CLIENT_CERT`, and `DOCKER_CLIENT_KEY` individually.
+</ParamField>
+
+<ParamField path="CONTAINER_RUNTIME" type="string" default="docker">
+  Container runtime to use.
+  
+  Options:
+  - `docker` - Docker Engine (default)
+  - `podman` - Podman (experimental)
+  
+  ```bash
+  CONTAINER_RUNTIME=docker
+  ```
+</ParamField>
+
+<ParamField path="OCI_RUNTIME" type="string" default="runc">
+  OCI runtime for containers.
+  
+  Options:
+  - `runc` - Default OCI runtime
+  - `crun` - Faster C-based runtime
+  
+  ```bash
+  OCI_RUNTIME=runc
+  ```
+</ParamField>
+
+<ParamField path="CONTAINER_NETWORK" type="string" default="rexec-network">
+  Docker network name for container isolation.
+  
+  ```bash
+  CONTAINER_NETWORK=rexec-network
+  ```
+  
+  Create with:
+  ```bash
+  docker network create rexec-network
+  ```
+</ParamField>
+
+<ParamField path="VOLUME_PATH" type="string" default="/var/lib/rexec/volumes">
+  Path for persistent container volumes.
+  
+  ```bash
+  VOLUME_PATH=/var/lib/rexec/volumes
+  ```
+  
+  <Note>
+    Ensure this directory exists and has proper permissions.
+  </Note>
+</ParamField>
+
+<ParamField path="CONTAINER_IDLE_TIMEOUT" type="integer" default="3600">
+  Idle timeout in seconds before stopping inactive containers.
+  
+  ```bash
+  CONTAINER_IDLE_TIMEOUT=3600  # 1 hour
+  ```
+</ParamField>
+
+## Resource Limits
+
+<ParamField path="DEFAULT_MEMORY_MB" type="integer" default="512">
+  Default memory limit for containers in megabytes.
+  
+  ```bash
+  DEFAULT_MEMORY_MB=512
+  ```
+</ParamField>
+
+<ParamField path="DEFAULT_CPU_SHARES" type="integer" default="512">
+  Default CPU shares for containers (relative weight).
+  
+  ```bash
+  DEFAULT_CPU_SHARES=512
+  ```
+  
+  <Note>
+    CPU shares are relative. 1024 shares = 1 CPU core's worth of priority.
+  </Note>
+</ParamField>
+
+<ParamField path="DEFAULT_DISK_MB" type="integer" default="1024">
+  Default disk quota for containers in megabytes.
+  
+  ```bash
+  DEFAULT_DISK_MB=1024  # 1GB
+  ```
+</ParamField>
+
+<ParamField path="MAX_CONTAINERS_FREE" type="integer" default="2">
+  Maximum containers allowed for free tier users.
+  
+  ```bash
+  MAX_CONTAINERS_FREE=2
+  ```
+</ParamField>
+
+<ParamField path="MAX_CONTAINERS_PRO" type="integer" default="5">
+  Maximum containers allowed for Pro tier users.
+  
+  ```bash
+  MAX_CONTAINERS_PRO=5
+  ```
+</ParamField>
+
+<ParamField path="MAX_CONTAINERS_ENTERPRISE" type="integer" default="20">
+  Maximum containers allowed for Enterprise tier users.
+  
+  ```bash
+  MAX_CONTAINERS_ENTERPRISE=20
+  ```
+</ParamField>
+
+<ParamField path="IDLE_TIMEOUT_MINUTES" type="integer" default="30">
+  Container idle timeout in minutes.
+  
+  ```bash
+  IDLE_TIMEOUT_MINUTES=30
+  ```
+</ParamField>
+
+## Storage Configuration
+
+<ParamField path="RECORDINGS_PATH" type="string" default="./data/recordings">
+  Local path for storing terminal session recordings.
+  
+  ```bash
+  RECORDINGS_PATH=/var/lib/rexec/recordings
+  ```
+</ParamField>
+
+<ParamField path="SCRIPTS_DIR" type="string" default="./scripts">
+  Directory containing installation scripts served by the API.
+  
+  ```bash
+  SCRIPTS_DIR=./scripts
+  ```
+</ParamField>
+
+<ParamField path="DOWNLOADS_DIR" type="string" default="./downloads">
+  Directory containing downloadable binaries (CLI, agent, etc.).
+  
+  ```bash
+  DOWNLOADS_DIR=./downloads
+  ```
+</ParamField>
+
+### S3 Storage (Optional)
+
+<ParamField path="S3_BUCKET" type="string">
+  S3 bucket name for storing session recordings.
+  
+  ```bash
+  S3_BUCKET=rexec-recordings
+  ```
+  
+  When set, recordings are uploaded to S3 instead of local storage.
+</ParamField>
+
+<ParamField path="S3_REGION" type="string" default="us-east-1">
+  AWS region for S3 bucket.
+  
+  ```bash
+  S3_REGION=us-east-1
+  ```
+</ParamField>
+
+<ParamField path="S3_ENDPOINT" type="string">
+  Custom S3-compatible endpoint (e.g., MinIO, DigitalOcean Spaces).
+  
+  ```bash
+  # MinIO
+  S3_ENDPOINT=http://minio:9000
+  
+  # DigitalOcean Spaces
+  S3_ENDPOINT=https://nyc3.digitaloceanspaces.com
+  ```
+</ParamField>
+
+<ParamField path="S3_ACCESS_KEY_ID" type="string">
+  AWS access key ID or S3-compatible access key.
+  
+  ```bash
+  S3_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+  ```
+</ParamField>
+
+<ParamField path="S3_SECRET_ACCESS_KEY" type="string">
+  AWS secret access key or S3-compatible secret key.
+  
+  ```bash
+  S3_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+  ```
+</ParamField>
+
+<ParamField path="S3_PREFIX" type="string" default="recordings">
+  S3 key prefix for organizing recordings.
+  
+  ```bash
+  S3_PREFIX=recordings
+  ```
+</ParamField>
+
+<ParamField path="S3_FORCE_PATH_STYLE" type="boolean" default="false">
+  Use path-style S3 URLs instead of virtual-hosted style. Required for MinIO.
+  
+  ```bash
+  S3_FORCE_PATH_STYLE=true
+  ```
+</ParamField>
+
+## Billing Configuration (Stripe)
+
+<ParamField path="STRIPE_SECRET_KEY" type="string">
+  Stripe API secret key from [dashboard.stripe.com/apikeys](https://dashboard.stripe.com/apikeys).
+  
+  ```bash
+  # Test mode
+  STRIPE_SECRET_KEY=sk_test_51A...
+  
+  # Production
+  STRIPE_SECRET_KEY=sk_live_51A...
+  ```
+</ParamField>
+
+<ParamField path="STRIPE_WEBHOOK_SECRET" type="string">
+  Stripe webhook signing secret for verifying webhook events.
+  
+  ```bash
+  STRIPE_WEBHOOK_SECRET=whsec_...
+  ```
+  
+  Get this from your webhook endpoint settings in the Stripe dashboard.
+</ParamField>
+
+<ParamField path="STRIPE_PRICE_PRO" type="string">
+  Stripe Price ID for Pro subscription tier.
+  
+  ```bash
+  STRIPE_PRICE_PRO=price_1A2B3C4D5E6F7G8H
+  ```
+</ParamField>
+
+<ParamField path="STRIPE_PRICE_ENTERPRISE" type="string">
+  Stripe Price ID for Enterprise subscription tier.
+  
+  ```bash
+  STRIPE_PRICE_ENTERPRISE=price_9Z8Y7X6W5V4U3T2S
+  ```
+</ParamField>
+
+## OAuth Configuration (Optional)
+
+<ParamField path="PIPEOPS_OAUTH_BASE_URL" type="string">
+  PipeOps OAuth base URL.
+  
+  ```bash
+  PIPEOPS_OAUTH_BASE_URL=https://api.pipeops.io/oauth
+  ```
+</ParamField>
+
+<ParamField path="PIPEOPS_API_URL" type="string">
+  PipeOps API URL.
+  
+  ```bash
+  PIPEOPS_API_URL=https://api.pipeops.io
+  ```
+</ParamField>
+
+<ParamField path="PIPEOPS_CLIENT_ID" type="string">
+  PipeOps OAuth client ID.
+  
+  ```bash
+  PIPEOPS_CLIENT_ID=your-client-id
+  ```
+</ParamField>
+
+<ParamField path="PIPEOPS_REDIRECT_URI" type="string">
+  OAuth callback URL.
+  
+  ```bash
+  PIPEOPS_REDIRECT_URI=http://localhost:8080/auth/pipeops/callback
+  ```
+</ParamField>
+
+## SSH Gateway Configuration
+
+<ParamField path="SSH_GATEWAY_ENABLED" type="boolean" default="false">
+  Enable SSH gateway for direct SSH access to containers.
+  
+  ```bash
+  SSH_GATEWAY_ENABLED=true
+  ```
+  
+  When enabled, exposes port 22 for SSH connections.
+</ParamField>
+
+<ParamField path="SSH_GATEWAY_HOST_KEY" type="string" default="/app/.ssh/host_key">
+  Path to SSH host key file.
+  
+  ```bash
+  SSH_GATEWAY_HOST_KEY=/app/.ssh/host_key
+  ```
+  
+  A new host key will be generated if this file doesn't exist.
+</ParamField>
+
+## Logging Configuration
+
+<ParamField path="LOG_LEVEL" type="string" default="info">
+  Logging verbosity level.
+  
+  Options:
+  - `debug` - Verbose logging for development
+  - `info` - Standard logging (recommended)
+  - `warn` - Only warnings and errors
+  - `error` - Only errors
+  
+  ```bash
+  LOG_LEVEL=info
+  ```
+</ParamField>
+
+## SSL Configuration (Docker Compose)
+
+<ParamField path="DOMAIN" type="string">
+  Your domain name for SSL certificate generation.
+  
+  ```bash
+  DOMAIN=rexec.example.com
+  ```
+</ParamField>
+
+<ParamField path="LETSENCRYPT_EMAIL" type="string">
+  Email address for Let's Encrypt SSL certificate notifications.
+  
+  ```bash
+  LETSENCRYPT_EMAIL=admin@example.com
+  ```
+</ParamField>
+
+## Example Configurations
+
+### Development (.env)
+
+```bash .env.development
+# Server
+PORT=8080
+GIN_MODE=debug
+REXEC_APP_URL=http://localhost:5173
+REXEC_WS_HOST=localhost:8080
+BASE_URL=http://localhost:8080
+
+# Security
+JWT_SECRET=dev-secret-key-change-in-production
+REXEC_ENCRYPTION_KEY=rexec-dev-key-do-not-use-in-prod
+ALLOWED_ORIGINS=http://localhost:5173,http://localhost:8080
+BLOCK_EMPTY_ORIGIN=false
+
+# Database
+DATABASE_URL=postgres://rexec:rexec@localhost:5432/rexec?sslmode=disable
+REDIS_URL=redis://localhost:6379
+
+# Docker
+DOCKER_HOST=unix:///var/run/docker.sock
+VOLUME_PATH=/var/lib/rexec/volumes
+CONTAINER_NETWORK=rexec-network
+CONTAINER_IDLE_TIMEOUT=3600
+
+# Resource Limits
+DEFAULT_MEMORY_MB=512
+DEFAULT_CPU_SHARES=512
+DEFAULT_DISK_MB=1024
+
+# Storage
+RECORDINGS_PATH=./data/recordings
+SCRIPTS_DIR=./scripts
+DOWNLOADS_DIR=./downloads
+
+# Logging
+LOG_LEVEL=debug
+```
+
+### Production (.env)
+
+```bash .env.production
+# Server
+PORT=8080
+GIN_MODE=release
+BASE_URL=https://rexec.example.com
+REXEC_WS_HOST=rexec.example.com:443
+
+# Security (GENERATED - DO NOT USE THESE VALUES)
+JWT_SECRET=$(openssl rand -base64 32)
+REXEC_ENCRYPTION_KEY=$(openssl rand -base64 32 | head -c 32)
+ALLOWED_ORIGINS=https://rexec.example.com
+BLOCK_EMPTY_ORIGIN=false
+
+# Database (from managed provider)
+DATABASE_URL=postgres://user:pass@db.example.com:5432/rexec?sslmode=require
+REDIS_URL=rediss://default:pass@redis.example.com:6379
+
+# Remote Docker Host
+DOCKER_HOST=tcp://docker-host.example.com:2376
+DOCKER_TLS_VERIFY=1
+DOCKER_CA_CERT=$(cat ca.pem)
+DOCKER_CLIENT_CERT=$(cat cert.pem)
+DOCKER_CLIENT_KEY=$(cat key.pem)
+
+# Container Configuration
+CONTAINER_NETWORK=rexec-network
+CONTAINER_IDLE_TIMEOUT=1800  # 30 minutes
+VOLUME_PATH=/var/lib/rexec/volumes
+
+# Resource Limits
+DEFAULT_MEMORY_MB=512
+DEFAULT_CPU_SHARES=512
+DEFAULT_DISK_MB=1024
+MAX_CONTAINERS_FREE=2
+MAX_CONTAINERS_PRO=5
+MAX_CONTAINERS_ENTERPRISE=20
+IDLE_TIMEOUT_MINUTES=30
+
+# S3 Storage
+S3_BUCKET=rexec-recordings-prod
+S3_REGION=us-east-1
+S3_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+S3_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+S3_PREFIX=recordings
+
+# Stripe Billing
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_PRICE_PRO=price_...
+STRIPE_PRICE_ENTERPRISE=price_...
+
+# Logging
+LOG_LEVEL=info
+```
+
+### Railway/PaaS (.env)
+
+```bash .env.railway
+# Server (Railway sets PORT automatically)
+GIN_MODE=release
+BASE_URL=${RAILWAY_PUBLIC_DOMAIN}
+
+# Security
+JWT_SECRET=$(openssl rand -base64 32)
+REXEC_ENCRYPTION_KEY=$(openssl rand -base64 32 | head -c 32)
+ALLOWED_ORIGINS=${RAILWAY_PUBLIC_DOMAIN}
+
+# Database (Railway auto-provides)
+DATABASE_URL=${DATABASE_URL}
+REDIS_URL=${REDIS_URL}
+
+# Remote Docker
+DOCKER_HOST=tcp://YOUR_VM_IP:2376
+DOCKER_TLS_VERIFY=1
+DOCKER_CA_CERT=$(cat ca.pem)
+DOCKER_CLIENT_CERT=$(cat cert.pem)
+DOCKER_CLIENT_KEY=$(cat key.pem)
+
+# Container Configuration
+CONTAINER_NETWORK=rexec-network
+CONTAINER_IDLE_TIMEOUT=1800
+
+# Resource Limits
+DEFAULT_MEMORY_MB=512
+DEFAULT_CPU_SHARES=512
+DEFAULT_DISK_MB=1024
+
+# Logging
+LOG_LEVEL=info
+```
+
+## Configuration Validation
+
+Rexec validates configuration on startup and will fail fast with helpful error messages:
+
+```bash
+# Test configuration
+./bin/rexec validate-config
+
+# Output:
+✓ JWT_SECRET is set
+✓ DATABASE_URL is valid
+✓ DOCKER_HOST is accessible
+✗ REDIS_URL is not set (recommended for production)
+⚠ GIN_MODE is 'debug' (use 'release' for production)
+```
+
+## Security Best Practices
+
+<Warning>
+  Never commit `.env` files to version control. Add `.env` to `.gitignore`.
+</Warning>
+
+1. **Secrets Management**
+   - Use a secrets manager (AWS Secrets Manager, HashiCorp Vault)
+   - Generate strong random values for all secrets
+   - Rotate secrets regularly (every 90 days)
+
+2. **Environment Variables**
+   - Never hardcode secrets in source code
+   - Use environment-specific `.env` files
+   - Validate required variables on startup
+
+3. **Production Checklist**
+   - [ ] Set `GIN_MODE=release`
+   - [ ] Generate strong `JWT_SECRET`
+   - [ ] Generate strong `REXEC_ENCRYPTION_KEY`
+   - [ ] Restrict `ALLOWED_ORIGINS`
+   - [ ] Enable TLS for Docker (`DOCKER_TLS_VERIFY=1`)
+   - [ ] Use managed PostgreSQL with SSL
+   - [ ] Use Redis for session management
+   - [ ] Set appropriate resource limits
+   - [ ] Configure S3 for recordings
+   - [ ] Enable audit logging
+   - [ ] Set `LOG_LEVEL=info`
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Compose" icon="docker" href="/deployment/docker-compose">
+    Deploy with Docker Compose
+  </Card>
+  <Card title="Standalone" icon="server" href="/deployment/standalone">
+    Manual installation guide
+  </Card>
+  <Card title="PaaS Deployment" icon="cloud" href="/deployment/paas">
+    Deploy to Railway, Render, Fly.io
+  </Card>
+  <Card title="Security" icon="shield" href="/security">
+    Learn about security best practices
+  </Card>
+</CardGroup>

@@ -1,0 +1,403 @@
+---
+title: File Operation Endpoints
+description: Upload, download, and manage files within containers
+---
+
+## Overview
+
+File endpoints allow you to interact with the filesystem of running containers. You can upload files, download files, list directory contents, create directories, and delete files.
+
+<Note>
+  All file operations require the container to be in `running` status. System paths like `/bin`, `/etc`, `/usr` are protected from deletion.
+</Note>
+
+## List Files
+
+List files and directories within a container path.
+
+```bash
+GET /api/containers/:id/files/list?path=/home/user
+```
+
+<ParamField path="id" type="string" required>
+  Container ID
+</ParamField>
+
+<ParamField query="path" type="string" default="/home/user">
+  Directory path to list
+</ParamField>
+
+<CodeGroup>
+```bash cURL
+curl -X GET "https://api.rexec.io/api/containers/abc123/files/list?path=/home/user" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```javascript JavaScript
+const response = await fetch(
+  'https://api.rexec.io/api/containers/abc123/files/list?path=/home/user',
+  { headers: { 'Authorization': 'Bearer YOUR_TOKEN' } }
+);
+const data = await response.json();
+console.log(data.files);
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    'https://api.rexec.io/api/containers/abc123/files/list',
+    params={'path': '/home/user'},
+    headers={'Authorization': 'Bearer YOUR_TOKEN'}
+)
+files = response.json()['files']
+```
+</CodeGroup>
+
+<ResponseField name="path" type="string">
+  The directory path that was listed
+</ResponseField>
+
+<ResponseField name="files" type="array">
+  Array of file/directory objects
+  
+  <Expandable title="File Object">
+    <ResponseField name="name" type="string" required>
+      File or directory name
+    </ResponseField>
+    
+    <ResponseField name="path" type="string" required>
+      Full path to the file
+    </ResponseField>
+    
+    <ResponseField name="size" type="integer" required>
+      File size in bytes (0 for directories)
+    </ResponseField>
+    
+    <ResponseField name="mode" type="string" required>
+      File permissions (e.g., `-rw-r--r--`, `drwxr-xr-x`)
+    </ResponseField>
+    
+    <ResponseField name="mod_time" type="timestamp" required>
+      Last modification time
+    </ResponseField>
+    
+    <ResponseField name="is_dir" type="boolean" required>
+      Whether this is a directory
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="count" type="integer">
+  Number of files/directories returned
+</ResponseField>
+
+<ResponseExample>
+```json 200 OK
+{
+  "path": "/home/user",
+  "files": [
+    {
+      "name": "project",
+      "path": "/home/user/project",
+      "size": 4096,
+      "mode": "drwxr-xr-x",
+      "mod_time": "2024-01-15T10:30:00Z",
+      "is_dir": true
+    },
+    {
+      "name": "app.js",
+      "path": "/home/user/app.js",
+      "size": 2048,
+      "mode": "-rw-r--r--",
+      "mod_time": "2024-01-15T10:25:00Z",
+      "is_dir": false
+    }
+  ],
+  "count": 2
+}
+```
+</ResponseExample>
+
+## Upload File
+
+Upload a file to a container. Maximum file size is 100MB.
+
+```bash
+POST /api/containers/:id/files?path=/home/user/
+```
+
+<ParamField path="id" type="string" required>
+  Container ID
+</ParamField>
+
+<ParamField query="path" type="string" default="/home/user/">
+  Destination directory path (must end with `/`)
+</ParamField>
+
+<ParamField body="file" type="file" required>
+  File to upload (multipart/form-data)
+</ParamField>
+
+<CodeGroup>
+```bash cURL
+curl -X POST "https://api.rexec.io/api/containers/abc123/files?path=/home/user/" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@/local/path/to/file.txt"
+```
+
+```javascript JavaScript
+const formData = new FormData();
+formData.append('file', fileInput.files[0]);
+
+const response = await fetch(
+  'https://api.rexec.io/api/containers/abc123/files?path=/home/user/',
+  {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer YOUR_TOKEN' },
+    body: formData
+  }
+);
+```
+
+```python Python
+import requests
+
+with open('file.txt', 'rb') as f:
+    response = requests.post(
+        'https://api.rexec.io/api/containers/abc123/files',
+        params={'path': '/home/user/'},
+        headers={'Authorization': 'Bearer YOUR_TOKEN'},
+        files={'file': f}
+    )
+```
+</CodeGroup>
+
+<ResponseExample>
+```json 200 OK
+{
+  "message": "file uploaded successfully",
+  "filename": "file.txt",
+  "path": "/home/user/file.txt",
+  "size": 1024
+}
+```
+</ResponseExample>
+
+<Warning>
+  File uploads are limited to 100MB. Larger files should be transferred using other methods like `wget` or `git clone` within the container.
+</Warning>
+
+## Download File
+
+Download a file from a container.
+
+```bash
+GET /api/containers/:id/files?path=/home/user/file.txt
+```
+
+<ParamField path="id" type="string" required>
+  Container ID
+</ParamField>
+
+<ParamField query="path" type="string" required>
+  Full path to the file to download
+</ParamField>
+
+<CodeGroup>
+```bash cURL
+curl -X GET "https://api.rexec.io/api/containers/abc123/files?path=/home/user/file.txt" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -o downloaded_file.txt
+```
+
+```javascript JavaScript
+const response = await fetch(
+  'https://api.rexec.io/api/containers/abc123/files?path=/home/user/file.txt',
+  { headers: { 'Authorization': 'Bearer YOUR_TOKEN' } }
+);
+const blob = await response.blob();
+const url = URL.createObjectURL(blob);
+// Trigger download in browser
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    'https://api.rexec.io/api/containers/abc123/files',
+    params={'path': '/home/user/file.txt'},
+    headers={'Authorization': 'Bearer YOUR_TOKEN'},
+    stream=True
+)
+
+with open('downloaded_file.txt', 'wb') as f:
+    for chunk in response.iter_content(chunk_size=8192):
+        f.write(chunk)
+```
+</CodeGroup>
+
+**Response Headers:**
+- `Content-Disposition: attachment; filename="file.txt"`
+- `Content-Type: application/octet-stream`
+- `Content-Length: 1024`
+- `X-File-Size: 1024`
+- `X-File-Mode: -rw-r--r--`
+
+<Note>
+  Attempting to download a directory will return an error. Use the list endpoint to browse directory contents.
+</Note>
+
+## Create Directory
+
+Create a new directory in a container.
+
+```bash
+POST /api/containers/:id/files/mkdir?path=/home/user/newdir
+```
+
+<ParamField path="id" type="string" required>
+  Container ID
+</ParamField>
+
+<ParamField query="path" type="string" required>
+  Full path for the new directory
+</ParamField>
+
+<CodeGroup>
+```bash cURL
+curl -X POST "https://api.rexec.io/api/containers/abc123/files/mkdir?path=/home/user/newdir" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```javascript JavaScript
+const response = await fetch(
+  'https://api.rexec.io/api/containers/abc123/files/mkdir?path=/home/user/newdir',
+  {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer YOUR_TOKEN' }
+  }
+);
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    'https://api.rexec.io/api/containers/abc123/files/mkdir',
+    params={'path': '/home/user/newdir'},
+    headers={'Authorization': 'Bearer YOUR_TOKEN'}
+)
+```
+</CodeGroup>
+
+<ResponseExample>
+```json 200 OK
+{
+  "message": "directory created successfully",
+  "path": "/home/user/newdir"
+}
+```
+</ResponseExample>
+
+<Note>
+  The `-p` flag is used automatically, so parent directories will be created if they don't exist.
+</Note>
+
+## Delete File
+
+Delete a file or directory from a container.
+
+```bash
+DELETE /api/containers/:id/files?path=/home/user/file.txt
+```
+
+<ParamField path="id" type="string" required>
+  Container ID
+</ParamField>
+
+<ParamField query="path" type="string" required>
+  Full path to the file or directory to delete
+</ParamField>
+
+<CodeGroup>
+```bash cURL
+curl -X DELETE "https://api.rexec.io/api/containers/abc123/files?path=/home/user/file.txt" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```javascript JavaScript
+const response = await fetch(
+  'https://api.rexec.io/api/containers/abc123/files?path=/home/user/file.txt',
+  {
+    method: 'DELETE',
+    headers: { 'Authorization': 'Bearer YOUR_TOKEN' }
+  }
+);
+```
+
+```python Python
+import requests
+
+response = requests.delete(
+    'https://api.rexec.io/api/containers/abc123/files',
+    params={'path': '/home/user/file.txt'},
+    headers={'Authorization': 'Bearer YOUR_TOKEN'}
+)
+```
+</CodeGroup>
+
+<ResponseExample>
+```json 200 OK
+{
+  "message": "file deleted successfully",
+  "path": "/home/user/file.txt"
+}
+```
+</ResponseExample>
+
+<Warning>
+  Deletion is permanent and cannot be undone. System paths (`/bin`, `/etc`, `/usr`, `/var`, `/lib`, `/root`) are protected and cannot be deleted.
+</Warning>
+
+## Error Responses
+
+<ResponseExample>
+```json 400 Bad Request
+{
+  "error": "container is not running"
+}
+```
+
+```json 400 Bad Request
+{
+  "error": "file too large (max 100MB)"
+}
+```
+
+```json 400 Bad Request
+{
+  "error": "path is a directory, use /files/list to list contents"
+}
+```
+
+```json 403 Forbidden
+{
+  "error": "cannot delete system files"
+}
+```
+
+```json 404 Not Found
+{
+  "error": "file not found: no such file or directory"
+}
+```
+</ResponseExample>
+
+## Best Practices
+
+- Always check container status before file operations
+- Use meaningful file names and organize in directories
+- Clean up temporary files to conserve disk quota
+- For large file transfers, use `wget`/`curl` inside the container
+- Back up important files by downloading them periodically

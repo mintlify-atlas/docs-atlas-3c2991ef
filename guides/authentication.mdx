@@ -1,0 +1,520 @@
+---
+title: Authentication
+description: Learn how to authenticate users with API tokens, OAuth, and multi-factor authentication in Rexec
+---
+
+## Overview
+
+Rexec provides multiple authentication methods to secure your cloud terminals:
+
+- **Guest Login** - Quick access with 50-hour sessions
+- **OAuth (PipeOps)** - Seamless sign-in with your PipeOps account
+- **API Tokens** - Programmatic access for SDKs and CLI
+- **Multi-Factor Authentication (MFA)** - TOTP-based 2FA for enhanced security
+
+---
+
+## Guest Login
+
+Guest login provides quick access without registration. Sessions are limited to 50 hours.
+
+### Guest Session Flow
+
+<Steps>
+  <Step title="Request Guest Session">
+    Send a POST request to create a guest session:
+
+    ```bash
+    curl -X POST https://rexec.pipeops.io/api/auth/guest \
+      -H "Content-Type: application/json" \
+      -d '{"username": "myname", "email": "me@example.com"}'
+    ```
+
+    The email is optional - if omitted, a unique guest email is generated.
+  </Step>
+
+  <Step title="Receive JWT Token">
+    Response includes a JWT token valid for 50 hours:
+
+    ```json
+    {
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+      "user": {
+        "id": "guest-abc123",
+        "username": "myname",
+        "tier": "guest"
+      },
+      "guest": true,
+      "expires_in": 180000,
+      "containers": 5
+    }
+    ```
+  </Step>
+
+  <Step title="Use Token for API Calls">
+    Include the token in the Authorization header:
+
+    ```bash
+    curl https://rexec.pipeops.io/api/containers \
+      -H "Authorization: Bearer <token>"
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  Guest users can create up to 5 containers. Upgrade to a free account for unlimited sessions.
+</Note>
+
+### Returning Guest Users
+
+If you provide an email during guest login, Rexec will remember you:
+
+```bash
+curl -X POST https://rexec.pipeops.io/api/auth/guest \
+  -H "Content-Type: application/json" \
+  -d '{"username": "myname", "email": "me@example.com"}'
+```
+
+On subsequent logins with the same email, your previous containers and data will be restored.
+
+---
+
+## OAuth with PipeOps
+
+Rexec uses OAuth with [PipeOps](https://pipeops.io) for secure authentication.
+
+### OAuth Flow
+
+<Steps>
+  <Step title="Get Authorization URL">
+    Request the OAuth authorization URL:
+
+    ```bash
+    curl https://rexec.pipeops.io/api/auth/oauth-url
+    ```
+
+    Response:
+    ```json
+    {
+      "auth_url": "https://pipeops.io/oauth/authorize?client_id=...",
+      "state": "random-state-string"
+    }
+    ```
+  </Step>
+
+  <Step title="Redirect User to PipeOps">
+    Redirect the user to the `auth_url`. They'll sign in with PipeOps and authorize Rexec.
+  </Step>
+
+  <Step title="Handle Callback">
+    After authorization, PipeOps redirects to `/api/auth/callback` with a code:
+
+    ```
+    https://rexec.pipeops.io/api/auth/callback?code=abc123&state=...
+    ```
+
+    Rexec exchanges the code for a token and user info.
+  </Step>
+
+  <Step title="Receive JWT Token">
+    The callback page will post a message to your app:
+
+    ```javascript
+    window.addEventListener('message', (event) => {
+      if (event.data.type === 'oauth_success') {
+        const { token, user } = event.data.data;
+        localStorage.setItem('rexec_token', token);
+        console.log('Logged in as:', user.username);
+      }
+    });
+    ```
+  </Step>
+</Steps>
+
+### OAuth Implementation Example
+
+Here's how the OAuth callback works internally:
+
+```go
+func (h *AuthHandler) OAuthCallback(c *gin.Context) {
+    code := c.Query("code")
+    state := c.Query("state")
+
+    // Verify state from cookie
+    cookieParam, _ := c.Cookie("oauth_state")
+    token, _ := jwt.Parse(cookieParam, func(token *jwt.Token) (interface{}, error) {
+        return h.jwtSecret, nil
+    })
+
+    // Exchange code for access token
+    tokenResp, _ := h.oauthService.ExchangeCodeForTokenWithRedirect(code, codeVerifier, redirectURI)
+
+    // Get user info from PipeOps
+    userInfo, _ := h.oauthService.GetUserInfo(tokenResp.AccessToken)
+
+    // Create or update user
+    user := &models.User{
+        Email:              userInfo.Email,
+        Username:           userInfo.Username,
+        Tier:               "free", // or "pro" if subscribed
+        SubscriptionActive: userInfo.SubscriptionActive,
+    }
+    h.store.CreateUser(ctx, user, "")
+
+    // Generate JWT token
+    authToken, _ := h.generateToken(user, sessionID)
+
+    // Render success page that posts token to parent window
+    c.Data(http.StatusOK, "text/html", renderOAuthSuccessPage(authToken, user))
+}
+```
+
+<Warning>
+  OAuth tokens are stored in HTTP-only cookies for security. The state parameter prevents CSRF attacks.
+</Warning>
+
+---
+
+## API Tokens
+
+API tokens provide programmatic access to Rexec for SDKs, CLI tools, and integrations.
+
+### Creating an API Token
+
+<Tabs>
+  <Tab title="Dashboard">
+    1. Sign in to [rexec.pipeops.io](https://rexec.pipeops.io)
+    2. Go to **Settings** → **API Tokens**
+    3. Click **Generate Token**
+    4. Give it a name and select scopes
+    5. Copy the token (you won't see it again!)
+  </Tab>
+
+  <Tab title="API">
+    Create a token via API:
+
+    ```bash
+    curl -X POST https://rexec.pipeops.io/api/tokens \
+      -H "Authorization: Bearer <your-session-token>" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "name": "My CLI Token",
+        "scopes": ["read", "write"],
+        "expires_in": 90
+      }'
+    ```
+
+    Response:
+    ```json
+    {
+      "token": "rexec_live_abc123...",
+      "id": "token-id",
+      "name": "My CLI Token",
+      "token_prefix": "rexec_live_abc",
+      "scopes": ["read", "write"],
+      "expires_at": "2025-04-01T00:00:00Z",
+      "message": "Save this token now. You won't be able to see it again!"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Using API Tokens
+
+Include your API token in the `Authorization` header:
+
+```bash
+curl https://rexec.pipeops.io/api/containers \
+  -H "Authorization: Bearer rexec_live_abc123..."
+```
+
+### Token Scopes
+
+API tokens support granular permissions:
+
+| Scope | Description |
+|-------|-------------|
+| `read` | Read container info, list containers |
+| `write` | Create, start, stop containers |
+| `delete` | Delete containers |
+| `files` | Upload/download files |
+| `terminal` | Connect to terminal sessions |
+
+### Managing Tokens
+
+<CodeGroup>
+```bash List Tokens
+curl https://rexec.pipeops.io/api/tokens \
+  -H "Authorization: Bearer <token>"
+```
+
+```bash Revoke Token
+curl -X DELETE https://rexec.pipeops.io/api/tokens/<token-id> \
+  -H "Authorization: Bearer <token>"
+```
+
+```bash Validate Token
+curl https://rexec.pipeops.io/api/tokens/validate \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+<Note>
+  Tokens are stored as SHA-256 hashes. Only the prefix (first 12 characters) is stored in plaintext for identification.
+</Note>
+
+---
+
+## Multi-Factor Authentication (MFA)
+
+Rexec supports TOTP-based multi-factor authentication for enhanced security.
+
+### Enabling MFA
+
+<Steps>
+  <Step title="Request MFA Setup">
+    Generate a new TOTP secret:
+
+    ```bash
+    curl -X POST https://rexec.pipeops.io/api/mfa/enable \
+      -H "Authorization: Bearer <token>"
+    ```
+
+    Response:
+    ```json
+    {
+      "secret": "JBSWY3DPEHPK3PXP",
+      "qr_code": "data:image/png;base64,iVBORw0KGgoAAAANS...",
+      "backup_codes": [
+        "2345-6789",
+        "3456-7890",
+        "4567-8901"
+      ]
+    }
+    ```
+  </Step>
+
+  <Step title="Scan QR Code">
+    Scan the QR code with an authenticator app:
+    - Google Authenticator
+    - Authy
+    - 1Password
+    - Microsoft Authenticator
+  </Step>
+
+  <Step title="Verify Setup">
+    Confirm by entering a 6-digit code:
+
+    ```bash
+    curl -X POST https://rexec.pipeops.io/api/mfa/verify \
+      -H "Authorization: Bearer <token>" \
+      -H "Content-Type: application/json" \
+      -d '{"code": "123456"}'
+    ```
+  </Step>
+</Steps>
+
+### MFA Login Flow
+
+Once MFA is enabled, users must provide a 6-digit code after entering credentials:
+
+```go
+// Check if MFA is enabled for this user
+if user.MFAEnabled {
+    // Generate a temporary MFA token
+    mfaToken, _ := h.generateMFAToken(user)
+    // Render MFA page that asks for code
+    c.Data(http.StatusOK, "text/html", renderMFAPage(mfaToken, user))
+    return
+}
+```
+
+The MFA page submits the code to complete login:
+
+```javascript
+fetch('/api/mfa/complete-login', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer ' + mfaToken
+  },
+  body: JSON.stringify({ code: '123456' })
+})
+```
+
+### TOTP Implementation
+
+Rexec uses the TOTP algorithm (RFC 6238) for MFA:
+
+```go
+type MFAService struct {
+    issuer string
+}
+
+func (s *MFAService) GenerateSecret(accountName string) (string, error) {
+    key, err := totp.Generate(totp.GenerateOpts{
+        Issuer:      s.issuer,
+        AccountName: accountName,
+    })
+    return key.Secret(), nil
+}
+
+func (s *MFAService) Validate(passcode, secret string) bool {
+    return totp.Validate(passcode, secret)
+}
+```
+
+### Backup Codes
+
+Backup codes are one-time use codes for account recovery:
+
+```go
+func GenerateBackupCodes(count int) ([]string, error) {
+    chars := "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+    codes := make([]string, count)
+
+    for i := 0; i < count; i++ {
+        code := make([]byte, 8)
+        for j := 0; j < 8; j++ {
+            idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
+            code[j] = chars[idx.Int64()]
+        }
+        // Format as XXXX-XXXX
+        codes[i] = string(code[:4]) + "-" + string(code[4:])
+    }
+    return codes, nil
+}
+```
+
+<Warning>
+  Store backup codes securely. Each code can only be used once. If you lose access to your authenticator app, backup codes are the only way to regain access.
+</Warning>
+
+### Disabling MFA
+
+```bash
+curl -X POST https://rexec.pipeops.io/api/mfa/disable \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"code": "123456"}'
+```
+
+---
+
+## JWT Token Structure
+
+Rexec uses JWT tokens for session management. Tokens contain:
+
+```json
+{
+  "user_id": "user-abc123",
+  "email": "user@example.com",
+  "username": "myusername",
+  "tier": "free",
+  "subscription_active": false,
+  "guest": false,
+  "sid": "session-id",
+  "exp": 1735689600,
+  "iat": 1727913600
+}
+```
+
+### Token Expiration
+
+- **Guest users**: 50 hours
+- **Free users**: 90 days (configurable)
+- **Pro users**: 90 days (configurable)
+
+Users can customize session duration in settings:
+
+```bash
+curl -X PATCH https://rexec.pipeops.io/api/profile \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"session_duration_minutes": 43200}'
+```
+
+---
+
+## Session Management
+
+Rexec tracks active sessions for security monitoring:
+
+```go
+type UserSession struct {
+    ID         string
+    UserID     string
+    IPAddress  string
+    UserAgent  string
+    CreatedAt  time.Time
+    LastSeenAt time.Time
+}
+```
+
+### Single Session Mode
+
+Enable single session mode to automatically revoke other sessions on new login:
+
+```bash
+curl -X PATCH https://rexec.pipeops.io/api/profile \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"single_session_mode": true}'
+```
+
+### Viewing Active Sessions
+
+```bash
+curl https://rexec.pipeops.io/api/sessions \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Security Best Practices
+
+<Note>
+  Follow these best practices to keep your Rexec account secure:
+</Note>
+
+1. **Enable MFA** - Add an extra layer of security to your account
+2. **Use API Tokens** - Create separate tokens for different applications
+3. **Rotate Tokens** - Regularly generate new tokens and revoke old ones
+4. **Limit Token Scopes** - Only grant necessary permissions
+5. **Monitor Sessions** - Review active sessions regularly
+6. **IP Allowlisting** - Restrict access to specific IP addresses
+7. **Never Share Tokens** - Keep tokens secret, never commit to Git
+8. **Use HTTPS** - Always use HTTPS endpoints
+
+---
+
+## Rate Limits
+
+API requests are rate-limited to prevent abuse:
+
+| Endpoint | Limit |
+|----------|-------|
+| Container creation | 10 per minute |
+| API requests | 100 per minute |
+| WebSocket connections | 5 concurrent per user |
+
+Exceeding rate limits returns `429 Too Many Requests`.
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Container Management" icon="box" href="/guides/container-management">
+    Learn how to create and manage containers
+  </Card>
+  <Card title="File Operations" icon="file" href="/guides/file-operations">
+    Upload and download files to containers
+  </Card>
+  <Card title="SDK Reference" icon="code" href="/sdk/overview">
+    Use Rexec programmatically with SDKs
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference/authentication">
+    Complete API documentation
+  </Card>
+</CardGroup>

@@ -1,0 +1,709 @@
+---
+title: Quick Start Guide
+description: Step-by-step guide to getting started with Rexec SDKs
+---
+
+This guide walks you through setting up and using a Rexec SDK to programmatically interact with sandboxed environments.
+
+## Prerequisites
+
+<Steps>
+  <Step title="A running Rexec instance">
+    Self-hosted or cloud instance accessible via URL
+  </Step>
+  <Step title="An API token">
+    Generate one from your Rexec dashboard (see below)
+  </Step>
+  <Step title="Your preferred language installed">
+    Go, JavaScript, Python, Rust, Ruby, Java, .NET, or PHP
+  </Step>
+</Steps>
+
+## Getting an API Token
+
+Before using any SDK, you need to generate an API token:
+
+<Steps>
+  <Step title="Log in to your Rexec dashboard">
+    Navigate to your Rexec instance in your web browser
+  </Step>
+  
+  <Step title="Go to Settings → API Tokens">
+    Find the API Tokens section in your account settings
+  </Step>
+  
+  <Step title="Click Generate Token">
+    Create a new API token with appropriate permissions
+  </Step>
+  
+  <Step title="Copy and store the token securely">
+    Save the token immediately - you won't be able to see it again
+  </Step>
+</Steps>
+
+<Warning>
+  **Security**: Never commit API tokens to version control. Use environment variables or secret management tools.
+</Warning>
+
+```bash
+export REXEC_URL="https://your-instance.com"
+export REXEC_TOKEN="your-api-token"
+```
+
+## Choose Your SDK
+
+Select your preferred programming language:
+
+<Tabs>
+  <Tab title="Go">
+    ```bash
+    go get github.com/PipeOpsHQ/rexec-go
+    ```
+  </Tab>
+  <Tab title="JavaScript/TypeScript">
+    ```bash
+    npm install @pipeopshq/rexec
+    # For Node.js:
+    npm install ws
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```bash
+    pip install rexec
+    ```
+  </Tab>
+  <Tab title="Rust">
+    Add to `Cargo.toml`:
+    ```toml
+    [dependencies]
+    rexec = "1.0"
+    tokio = { version = "1", features = ["full"] }
+    ```
+  </Tab>
+  <Tab title="Ruby">
+    ```bash
+    gem install rexec
+    ```
+  </Tab>
+  <Tab title="Java">
+    ```xml
+    <dependency>
+        <groupId>io.pipeops</groupId>
+        <artifactId>rexec</artifactId>
+        <version>1.0.0</version>
+    </dependency>
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ```bash
+    dotnet add package Rexec
+    ```
+  </Tab>
+  <Tab title="PHP">
+    ```bash
+    composer require pipeopshq/rexec
+    ```
+  </Tab>
+</Tabs>
+
+## Step-by-Step Tutorial
+
+### Step 1: Create a Client
+
+Initialize the SDK client with your instance URL and API token:
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    import rexec "github.com/PipeOpsHQ/rexec-go"
+
+    client := rexec.NewClient(
+        os.Getenv("REXEC_URL"),
+        os.Getenv("REXEC_TOKEN"),
+    )
+    ```
+  </Tab>
+  
+  <Tab title="JavaScript">
+    ```typescript
+    import { RexecClient } from '@pipeopshq/rexec';
+
+    const client = new RexecClient({
+      baseURL: process.env.REXEC_URL,
+      token: process.env.REXEC_TOKEN,
+    });
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    from rexec import RexecClient
+
+    client = RexecClient(
+        base_url=os.environ["REXEC_URL"],
+        token=os.environ["REXEC_TOKEN"]
+    )
+    ```
+  </Tab>
+  
+  <Tab title="Rust">
+    ```rust
+    use rexec::RexecClient;
+
+    let client = RexecClient::new(
+        std::env::var("REXEC_URL")?,
+        std::env::var("REXEC_TOKEN")?
+    )?;
+    ```
+  </Tab>
+  
+  <Tab title="Ruby">
+    ```ruby
+    require 'rexec'
+
+    client = Rexec::Client.new(
+      ENV['REXEC_URL'],
+      ENV['REXEC_TOKEN']
+    )
+    ```
+  </Tab>
+  
+  <Tab title="Java">
+    ```java
+    import io.pipeops.rexec.RexecClient;
+
+    RexecClient client = new RexecClient(
+        System.getenv("REXEC_URL"),
+        System.getenv("REXEC_TOKEN")
+    );
+    ```
+  </Tab>
+  
+  <Tab title=".NET">
+    ```csharp
+    using Rexec;
+
+    var client = new RexecClient(
+        Environment.GetEnvironmentVariable("REXEC_URL"),
+        Environment.GetEnvironmentVariable("REXEC_TOKEN")
+    );
+    ```
+  </Tab>
+  
+  <Tab title="PHP">
+    ```php
+    use Rexec\RexecClient;
+
+    $client = new RexecClient(
+        getenv('REXEC_URL'),
+        getenv('REXEC_TOKEN')
+    );
+    ```
+  </Tab>
+</Tabs>
+
+### Step 2: Create a Container
+
+Create a new sandboxed Linux environment:
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    container, err := client.Containers.Create(ctx, &rexec.CreateContainerRequest{
+        Image: "ubuntu:24.04",
+        Name:  "my-sandbox",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("Created container: %s\n", container.ID)
+    ```
+  </Tab>
+  
+  <Tab title="JavaScript">
+    ```typescript
+    const container = await client.containers.create({
+      image: 'ubuntu:24.04',
+      name: 'my-sandbox',
+    });
+    console.log(`Created container: ${container.id}`);
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    container = await client.containers.create(
+        image="ubuntu:24.04",
+        name="my-sandbox"
+    )
+    print(f"Created container: {container.id}")
+    ```
+  </Tab>
+  
+  <Tab title="Rust">
+    ```rust
+    let container = client.containers()
+        .create("ubuntu:24.04")
+        .name("my-sandbox")
+        .send()
+        .await?;
+    println!("Created container: {}", container.id);
+    ```
+  </Tab>
+  
+  <Tab title="Ruby">
+    ```ruby
+    container = client.containers.create(
+      'ubuntu:24.04',
+      name: 'my-sandbox'
+    )
+    puts "Created container: #{container.id}"
+    ```
+  </Tab>
+  
+  <Tab title="Java">
+    ```java
+    Container container = client.containers().create(
+        new CreateContainerRequest("ubuntu:24.04")
+            .setName("my-sandbox")
+    );
+    System.out.println("Created container: " + container.getId());
+    ```
+  </Tab>
+  
+  <Tab title=".NET">
+    ```csharp
+    var container = await client.Containers.CreateAsync(
+        new CreateContainerRequest("ubuntu:24.04") 
+        { 
+            Name = "my-sandbox" 
+        }
+    );
+    Console.WriteLine($"Created container: {container.Id}");
+    ```
+  </Tab>
+  
+  <Tab title="PHP">
+    ```php
+    $container = $client->containers()->create(
+        'ubuntu:24.04',
+        ['name' => 'my-sandbox']
+    );
+    echo "Created container: {$container->id}\n";
+    ```
+  </Tab>
+</Tabs>
+
+### Step 3: Start the Container
+
+Start the container to make it ready for commands:
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    err := client.Containers.Start(ctx, container.ID)
+    if err != nil {
+        log.Fatal(err)
+    }
+    ```
+  </Tab>
+  
+  <Tab title="JavaScript">
+    ```typescript
+    await client.containers.start(container.id);
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    await client.containers.start(container.id)
+    ```
+  </Tab>
+  
+  <Tab title="Rust">
+    ```rust
+    client.containers().start(&container.id).await?;
+    ```
+  </Tab>
+  
+  <Tab title="Ruby">
+    ```ruby
+    client.containers.start(container.id)
+    ```
+  </Tab>
+  
+  <Tab title="Java">
+    ```java
+    client.containers().start(container.getId());
+    ```
+  </Tab>
+  
+  <Tab title=".NET">
+    ```csharp
+    await client.Containers.StartAsync(container.Id);
+    ```
+  </Tab>
+  
+  <Tab title="PHP">
+    ```php
+    $client->containers()->start($container->id);
+    ```
+  </Tab>
+</Tabs>
+
+### Step 4: Execute Commands
+
+Run commands and capture their output:
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    result, err := client.Containers.Exec(
+        ctx, 
+        container.ID, 
+        []string{"echo", "Hello World"}
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println(result.Stdout)
+    ```
+  </Tab>
+  
+  <Tab title="JavaScript">
+    ```typescript
+    const result = await client.containers.exec(
+      container.id, 
+      'echo "Hello World"'
+    );
+    console.log(result.stdout);
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    result = await client.containers.exec(
+        container.id, 
+        "echo 'Hello World'"
+    )
+    print(result.stdout)
+    ```
+  </Tab>
+  
+  <Tab title="Rust">
+    ```rust
+    let result = client.containers()
+        .exec(&container.id, &["echo", "Hello World"])
+        .await?;
+    println!("{}", result.stdout);
+    ```
+  </Tab>
+  
+  <Tab title="Ruby">
+    ```ruby
+    result = client.containers.exec(
+      container.id, 
+      "echo 'Hello World'"
+    )
+    puts result.stdout
+    ```
+  </Tab>
+  
+  <Tab title="Java">
+    ```java
+    ExecResult result = client.containers().exec(
+        container.getId(), 
+        "echo 'Hello World'"
+    );
+    System.out.println(result.getStdout());
+    ```
+  </Tab>
+  
+  <Tab title=".NET">
+    ```csharp
+    var result = await client.Containers.ExecAsync(
+        container.Id, 
+        "echo 'Hello World'"
+    );
+    Console.WriteLine(result.Stdout);
+    ```
+  </Tab>
+  
+  <Tab title="PHP">
+    ```php
+    $result = $client->containers()->exec(
+        $container->id, 
+        "echo 'Hello World'"
+    );
+    echo $result->stdout;
+    ```
+  </Tab>
+</Tabs>
+
+### Step 5: Work with Files
+
+List, read, and write files in your container:
+
+<CodeGroup>
+```go Go - List Files
+files, err := client.Files.List(ctx, container.ID, "/home")
+if err != nil {
+    log.Fatal(err)
+}
+for _, file := range files {
+    fmt.Printf("%s - %d bytes\n", file.Name, file.Size)
+}
+```
+
+```typescript JavaScript - Read File
+const content = await client.files.read(
+  container.id, 
+  '/etc/hostname'
+);
+console.log(content);
+```
+
+```python Python - Write File
+await client.files.write(
+    container.id,
+    "/app/script.sh",
+    "#!/bin/bash\necho hello"
+)
+```
+
+```rust Rust - Download File
+let content = client.files()
+    .download(&container.id, "/etc/passwd")
+    .await?;
+println!("{}", String::from_utf8_lossy(&content));
+```
+</CodeGroup>
+
+### Step 6: Interactive Terminal
+
+Connect to a real-time terminal session:
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    term, err := client.Terminal.Connect(ctx, container.ID)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer term.Close()
+
+    term.OnData(func(data []byte) {
+        fmt.Print(string(data))
+    })
+
+    term.Write([]byte("ls -la\n"))
+    ```
+  </Tab>
+  
+  <Tab title="JavaScript">
+    ```typescript
+    const terminal = await client.terminal.connect(container.id);
+
+    terminal.onData((data) => process.stdout.write(data));
+    terminal.write('ls -la\n');
+
+    // Later: terminal.close();
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    async with client.terminal.connect(container.id) as term:
+        await term.write(b"ls -la\n")
+        async for data in term:
+            print(data.decode(), end="")
+    ```
+  </Tab>
+  
+  <Tab title="Rust">
+    ```rust
+    let mut term = client.terminal()
+        .connect(&container.id)
+        .await?;
+
+    term.write(b"ls -la\n").await?;
+
+    while let Some(data) = term.read().await? {
+        print!("{}", String::from_utf8_lossy(&data));
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Step 7: Clean Up
+
+Delete the container when you're done:
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    client.Containers.Stop(ctx, container.ID)
+    client.Containers.Delete(ctx, container.ID)
+    ```
+  </Tab>
+  
+  <Tab title="JavaScript">
+    ```typescript
+    await client.containers.stop(container.id);
+    await client.containers.delete(container.id);
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    await client.containers.stop(container.id)
+    await client.containers.delete(container.id)
+    ```
+  </Tab>
+  
+  <Tab title="Rust">
+    ```rust
+    client.containers().stop(&container.id).await?;
+    client.containers().delete(&container.id).await?;
+    ```
+  </Tab>
+</Tabs>
+
+## Complete Example
+
+Here's a full working example:
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    package main
+
+    import (
+        "context"
+        "fmt"
+        "log"
+        "os"
+        rexec "github.com/PipeOpsHQ/rexec-go"
+    )
+
+    func main() {
+        client := rexec.NewClient(
+            os.Getenv("REXEC_URL"),
+            os.Getenv("REXEC_TOKEN"),
+        )
+
+        ctx := context.Background()
+
+        // Create container
+        container, err := client.Containers.Create(ctx, &rexec.CreateContainerRequest{
+            Image: "ubuntu:24.04",
+            Name:  "my-sandbox",
+        })
+        if err != nil {
+            log.Fatal(err)
+        }
+        defer client.Containers.Delete(ctx, container.ID)
+
+        // Start it
+        if err := client.Containers.Start(ctx, container.ID); err != nil {
+            log.Fatal(err)
+        }
+
+        // Run a command
+        result, err := client.Containers.Exec(ctx, container.ID, []string{"echo", "Hello!"})
+        if err != nil {
+            log.Fatal(err)
+        }
+        fmt.Println(result.Stdout)
+    }
+    ```
+  </Tab>
+  
+  <Tab title="JavaScript">
+    ```typescript
+    import { RexecClient } from '@pipeopshq/rexec';
+
+    const client = new RexecClient({
+      baseURL: process.env.REXEC_URL!,
+      token: process.env.REXEC_TOKEN!,
+    });
+
+    async function main() {
+      // Create container
+      const container = await client.containers.create({
+        image: 'ubuntu:24.04',
+        name: 'my-sandbox',
+      });
+
+      try {
+        // Start it
+        await client.containers.start(container.id);
+
+        // Run a command
+        const result = await client.containers.exec(
+          container.id, 
+          'echo "Hello!"'
+        );
+        console.log(result.stdout);
+      } finally {
+        // Clean up
+        await client.containers.delete(container.id);
+      }
+    }
+
+    main().catch(console.error);
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    import asyncio
+    import os
+    from rexec import RexecClient
+
+    async def main():
+        async with RexecClient(
+            base_url=os.environ["REXEC_URL"],
+            token=os.environ["REXEC_TOKEN"]
+        ) as client:
+            # Create container
+            container = await client.containers.create(
+                image="ubuntu:24.04",
+                name="my-sandbox"
+            )
+
+            try:
+                # Start it
+                await client.containers.start(container.id)
+
+                # Run a command
+                result = await client.containers.exec(
+                    container.id, 
+                    "echo 'Hello!'"
+                )
+                print(result.stdout)
+            finally:
+                # Clean up
+                await client.containers.delete(container.id)
+
+    asyncio.run(main())
+    ```
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/sdks/authentication">
+    Learn about API token management and security best practices
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    Explore the complete API documentation
+  </Card>
+  <Card title="Use Cases" icon="lightbulb" href="/guides/use-cases">
+    See real-world integration examples
+  </Card>
+  <Card title="Error Handling" icon="shield-check" href="/guides/error-handling">
+    Implement robust error handling in your applications
+  </Card>
+</CardGroup>

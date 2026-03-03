@@ -1,0 +1,730 @@
+---
+title: JavaScript/TypeScript SDK
+description: Official JavaScript and TypeScript SDK for Rexec - Build container orchestration with modern async/await patterns
+---
+
+## Installation
+
+Install the SDK using npm or your preferred package manager:
+
+<CodeGroup>
+```bash npm
+npm install @pipeopshq/rexec
+```
+
+```bash yarn
+yarn add @pipeopshq/rexec
+```
+
+```bash pnpm
+pnpm add @pipeopshq/rexec
+```
+</CodeGroup>
+
+**Requirements:** Node.js 16+ or modern browser with WebSocket support
+
+## Quick Start
+
+```typescript
+import { RexecClient } from '@pipeopshq/rexec';
+
+const client = new RexecClient({
+  baseURL: process.env.REXEC_URL,
+  token: process.env.REXEC_TOKEN,
+});
+
+// Create a sandbox
+const container = await client.containers.create({
+  image: 'ubuntu:24.04',
+  name: 'my-sandbox',
+});
+
+console.log(`Created container: ${container.id}`);
+
+// Connect to terminal
+const terminal = await client.terminal.connect(container.id);
+terminal.write('echo "Hello World"\n');
+terminal.onData((data) => console.log(data));
+
+// Clean up
+await client.containers.delete(container.id);
+```
+
+## Client Initialization
+
+### Creating a Client
+
+```typescript
+import { RexecClient } from '@pipeopshq/rexec';
+
+const client = new RexecClient({
+  baseURL: 'https://your-rexec-instance.com',
+  token: 'your-api-token',
+});
+```
+
+### Custom Fetch Implementation
+
+For Node.js environments or custom network handling:
+
+```typescript
+import { RexecClient } from '@pipeopshq/rexec';
+import fetch from 'node-fetch';
+
+const client = new RexecClient({
+  baseURL: process.env.REXEC_URL,
+  token: process.env.REXEC_TOKEN,
+  fetch: fetch as any, // Use node-fetch for Node.js < 18
+});
+```
+
+## Container Operations
+
+The `containers` service provides methods for managing sandboxed environments.
+
+### Create Container
+
+<CodeGroup>
+```typescript Basic
+const container = await client.containers.create({
+  image: 'ubuntu:24.04',
+});
+```
+
+```typescript With Options
+const container = await client.containers.create({
+  image: 'node:20',
+  name: 'my-node-sandbox',
+  environment: {
+    NODE_ENV: 'development',
+    API_KEY: process.env.API_KEY,
+  },
+  labels: {
+    project: 'demo',
+    owner: 'engineering',
+  },
+});
+```
+</CodeGroup>
+
+### List Containers
+
+```typescript
+const containers = await client.containers.list();
+
+for (const container of containers) {
+  console.log(`${container.name}: ${container.status}`);
+}
+```
+
+### Get Container
+
+```typescript
+try {
+  const container = await client.containers.get(containerId);
+  
+  console.log('Container:', container.name);
+  console.log('Status:', container.status);
+  console.log('Created:', new Date(container.created_at));
+} catch (error) {
+  if (error instanceof RexecError) {
+    console.error(`API Error ${error.statusCode}: ${error.message}`);
+  }
+}
+```
+
+### Lifecycle Management
+
+<CodeGroup>
+```typescript Start
+await client.containers.start(containerId);
+console.log('Container started');
+```
+
+```typescript Stop
+await client.containers.stop(containerId);
+console.log('Container stopped');
+```
+
+```typescript Delete
+await client.containers.delete(containerId);
+console.log('Container deleted');
+```
+</CodeGroup>
+
+## File Operations
+
+The `files` service enables file management within containers.
+
+### List Files
+
+```typescript
+const files = await client.files.list(containerId, '/home');
+
+for (const file of files) {
+  const icon = file.is_dir ? '📁' : '📄';
+  console.log(`${icon} ${file.name} (${file.size} bytes)`);
+}
+```
+
+### Download Files
+
+```typescript
+// Download as ArrayBuffer
+const data = await client.files.download(containerId, '/etc/passwd');
+const text = new TextDecoder().decode(data);
+console.log(text);
+
+// In Node.js, save to file
+import { writeFileSync } from 'fs';
+const buffer = Buffer.from(data);
+writeFileSync('passwd.txt', buffer);
+```
+
+### Create Directory
+
+```typescript
+await client.files.mkdir(containerId, '/home/mydir');
+console.log('Directory created');
+```
+
+## Terminal Connections
+
+The `terminal` service provides WebSocket-based terminal access with full PTY support.
+
+### Connect to Terminal
+
+```typescript
+const terminal = await client.terminal.connect(containerId, {
+  cols: 120,
+  rows: 40,
+});
+
+console.log('Terminal connected');
+```
+
+### Send Commands
+
+```typescript
+// Send a simple command
+terminal.write('ls -la\n');
+
+// Send multiple commands
+const commands = [
+  'cd /app\n',
+  'npm install\n',
+  'npm start\n',
+];
+
+for (const cmd of commands) {
+  terminal.write(cmd);
+}
+```
+
+### Handle Output
+
+```typescript
+terminal.onData((data) => {
+  if (typeof data === 'string') {
+    console.log(data);
+  } else {
+    // ArrayBuffer for binary data
+    const text = new TextDecoder().decode(data);
+    console.log(text);
+  }
+});
+```
+
+### Handle Events
+
+```typescript
+terminal.onClose(() => {
+  console.log('Terminal disconnected');
+});
+
+terminal.onError((error) => {
+  console.error('Terminal error:', error);
+});
+```
+
+### Resize Terminal
+
+```typescript
+// Resize to 150 columns x 50 rows
+terminal.resize(150, 50);
+```
+
+### Close Connection
+
+```typescript
+terminal.close();
+```
+
+## Error Handling
+
+The SDK provides structured error handling with `RexecError`:
+
+```typescript
+import { RexecClient, RexecError } from '@pipeopshq/rexec';
+
+try {
+  const container = await client.containers.get('invalid-id');
+} catch (error) {
+  if (error instanceof RexecError) {
+    switch (error.statusCode) {
+      case 404:
+        console.log('Container not found');
+        break;
+      case 401:
+        console.log('Authentication failed');
+        break;
+      default:
+        console.error(`API Error ${error.statusCode}: ${error.message}`);
+    }
+  } else {
+    console.error('Network error:', error);
+  }
+}
+```
+
+## TypeScript Support
+
+The SDK is written in TypeScript and provides full type definitions:
+
+```typescript
+import type {
+  Container,
+  CreateContainerRequest,
+  FileInfo,
+  Terminal,
+  RexecConfig,
+} from '@pipeopshq/rexec';
+
+const request: CreateContainerRequest = {
+  image: 'ubuntu:24.04',
+  name: 'my-container',
+  environment: {
+    MY_VAR: 'value',
+  },
+};
+
+const container: Container = await client.containers.create(request);
+const files: FileInfo[] = await client.files.list(container.id, '/');
+```
+
+## Complete Examples
+
+### CI/CD Integration
+
+```typescript
+import { RexecClient } from '@pipeopshq/rexec';
+
+async function runCITests(image: string, commands: string[]) {
+  const client = new RexecClient({
+    baseURL: process.env.REXEC_URL!,
+    token: process.env.REXEC_TOKEN!,
+  });
+
+  // Create test container
+  const container = await client.containers.create({
+    image,
+    environment: { CI: 'true' },
+  });
+
+  try {
+    await client.containers.start(container.id);
+
+    // Connect to terminal
+    const terminal = await client.terminal.connect(container.id);
+    
+    // Capture output
+    let output = '';
+    terminal.onData((data) => {
+      output += typeof data === 'string' ? data : new TextDecoder().decode(data);
+    });
+
+    // Run commands
+    for (const cmd of commands) {
+      terminal.write(cmd + '\n');
+    }
+
+    // Wait for completion
+    await new Promise((resolve) => {
+      terminal.onClose(resolve);
+    });
+
+    return { success: true, output };
+  } finally {
+    await client.containers.delete(container.id);
+  }
+}
+
+// Usage
+const result = await runCITests('node:20', [
+  'npm install',
+  'npm test',
+]);
+
+if (result.success) {
+  console.log('Tests passed!');
+} else {
+  console.error('Tests failed');
+  process.exit(1);
+}
+```
+
+### Interactive Terminal UI
+
+```typescript
+import { RexecClient } from '@pipeopshq/rexec';
+
+async function createInteractiveTerminal(containerId: string) {
+  const client = new RexecClient({
+    baseURL: process.env.REXEC_URL!,
+    token: process.env.REXEC_TOKEN!,
+  });
+
+  const terminal = await client.terminal.connect(containerId, {
+    cols: 120,
+    rows: 40,
+  });
+
+  // Handle output
+  terminal.onData((data) => {
+    const text = typeof data === 'string' ? data : new TextDecoder().decode(data);
+    process.stdout.write(text);
+  });
+
+  // Handle input
+  process.stdin.setRawMode(true);
+  process.stdin.on('data', (data) => {
+    terminal.write(data.toString());
+  });
+
+  // Handle resize
+  process.stdout.on('resize', () => {
+    terminal.resize(process.stdout.columns, process.stdout.rows);
+  });
+
+  // Handle close
+  terminal.onClose(() => {
+    console.log('\nTerminal disconnected');
+    process.exit(0);
+  });
+
+  terminal.onError((error) => {
+    console.error('Error:', error);
+    process.exit(1);
+  });
+}
+```
+
+### API Testing with Vitest
+
+```typescript
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { RexecClient } from '@pipeopshq/rexec';
+
+describe('API Integration Tests', () => {
+  let client: RexecClient;
+  let redisContainer: Container;
+  let postgresContainer: Container;
+
+  beforeAll(async () => {
+    client = new RexecClient({
+      baseURL: process.env.REXEC_URL!,
+      token: process.env.REXEC_TOKEN!,
+    });
+
+    // Spin up test infrastructure
+    [redisContainer, postgresContainer] = await Promise.all([
+      client.containers.create({ image: 'redis:7' }),
+      client.containers.create({ 
+        image: 'postgres:16',
+        environment: { POSTGRES_PASSWORD: 'test' },
+      }),
+    ]);
+
+    await Promise.all([
+      client.containers.start(redisContainer.id),
+      client.containers.start(postgresContainer.id),
+    ]);
+  });
+
+  afterAll(async () => {
+    await Promise.all([
+      client.containers.delete(redisContainer.id),
+      client.containers.delete(postgresContainer.id),
+    ]);
+  });
+
+  it('should cache data in Redis', async () => {
+    const terminal = await client.terminal.connect(redisContainer.id);
+    
+    let output = '';
+    terminal.onData((data) => {
+      output += typeof data === 'string' ? data : new TextDecoder().decode(data);
+    });
+
+    terminal.write('redis-cli SET test "hello"\n');
+    terminal.write('redis-cli GET test\n');
+    
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    
+    expect(output).toContain('hello');
+  });
+});
+```
+
+### Education Platform
+
+```typescript
+import { RexecClient } from '@pipeopshq/rexec';
+
+class StudentSandbox {
+  private client: RexecClient;
+
+  constructor() {
+    this.client = new RexecClient({
+      baseURL: process.env.REXEC_URL!,
+      token: process.env.REXEC_TOKEN!,
+    });
+  }
+
+  async createForStudent(studentId: string, courseId: string) {
+    // Create container per student
+    const container = await this.client.containers.create({
+      image: 'python:3.12',
+      name: `student-${studentId}-${courseId}`,
+      labels: { 
+        student: studentId,
+        course: courseId,
+        type: 'education',
+      },
+    });
+
+    // Upload starter code
+    const starterCode = `
+def greet(name: str) -> str:
+    """TODO: Implement this function"""
+    pass
+
+if __name__ == "__main__":
+    print(greet("Student"))
+`;
+
+    await this.client.files.upload(
+      container.id,
+      '/home/student/assignment.py',
+      new TextEncoder().encode(starterCode)
+    );
+
+    return container;
+  }
+
+  async gradeSubmission(containerId: string) {
+    const terminal = await this.client.terminal.connect(containerId);
+    
+    let output = '';
+    terminal.onData((data) => {
+      output += typeof data === 'string' ? data : new TextDecoder().decode(data);
+    });
+
+    terminal.write('python -m pytest /home/student/\n');
+
+    await new Promise((resolve) => {
+      terminal.onClose(resolve);
+    });
+
+    const passed = output.includes('passed');
+    return {
+      passed,
+      output,
+      score: passed ? 100 : 0,
+    };
+  }
+}
+```
+
+## API Reference
+
+### RexecClient
+
+```typescript
+class RexecClient {
+  constructor(config: RexecConfig);
+  
+  containers: ContainerService;
+  files: FileService;
+  terminal: TerminalService;
+}
+```
+
+### Types
+
+<ParamField path="RexecConfig" type="interface">
+  Client configuration.
+  
+  <ParamField path="baseURL" type="string" required>Base URL of Rexec instance</ParamField>
+  <ParamField path="token" type="string" required>API token for authentication</ParamField>
+  <ParamField path="fetch" type="typeof fetch">Custom fetch implementation</ParamField>
+</ParamField>
+
+<ParamField path="Container" type="interface">
+  Container instance.
+  
+  <ParamField path="id" type="string">Container ID</ParamField>
+  <ParamField path="name" type="string">Container name</ParamField>
+  <ParamField path="image" type="string">Docker image</ParamField>
+  <ParamField path="status" type="'running' | 'stopped' | 'creating' | 'error'">Current status</ParamField>
+  <ParamField path="created_at" type="string">Creation timestamp (ISO 8601)</ParamField>
+  <ParamField path="started_at" type="string?">Start timestamp</ParamField>
+  <ParamField path="labels" type="Record<string, string>">Container labels</ParamField>
+  <ParamField path="environment" type="Record<string, string>">Environment variables</ParamField>
+</ParamField>
+
+<ParamField path="CreateContainerRequest" type="interface">
+  Container creation request.
+  
+  <ParamField path="image" type="string" required>Docker image to use</ParamField>
+  <ParamField path="name" type="string">Optional container name</ParamField>
+  <ParamField path="environment" type="Record<string, string>">Environment variables</ParamField>
+  <ParamField path="labels" type="Record<string, string>">Container labels</ParamField>
+</ParamField>
+
+<ParamField path="FileInfo" type="interface">
+  File metadata.
+  
+  <ParamField path="name" type="string">File name</ParamField>
+  <ParamField path="path" type="string">Full path</ParamField>
+  <ParamField path="size" type="number">File size in bytes</ParamField>
+  <ParamField path="mode" type="string">File permissions</ParamField>
+  <ParamField path="mod_time" type="string">Last modification time</ParamField>
+  <ParamField path="is_dir" type="boolean">Whether this is a directory</ParamField>
+</ParamField>
+
+### ContainerService
+
+<ParamField path="list()" type="Promise<Container[]>">
+  List all containers.
+</ParamField>
+
+<ParamField path="get(id)" type="Promise<Container>">
+  Get a container by ID.
+</ParamField>
+
+<ParamField path="create(options)" type="Promise<Container>">
+  Create a new container.
+</ParamField>
+
+<ParamField path="delete(id)" type="Promise<void>">
+  Delete a container.
+</ParamField>
+
+<ParamField path="start(id)" type="Promise<void>">
+  Start a container.
+</ParamField>
+
+<ParamField path="stop(id)" type="Promise<void>">
+  Stop a container.
+</ParamField>
+
+### FileService
+
+<ParamField path="list(containerId, path)" type="Promise<FileInfo[]>">
+  List files in a directory.
+</ParamField>
+
+<ParamField path="download(containerId, path)" type="Promise<ArrayBuffer>">
+  Download a file.
+</ParamField>
+
+<ParamField path="mkdir(containerId, path)" type="Promise<void>">
+  Create a directory.
+</ParamField>
+
+### TerminalService
+
+<ParamField path="connect(containerId, options?)" type="Promise<Terminal>">
+  Connect to container terminal.
+</ParamField>
+
+### Terminal
+
+<ParamField path="write(data)" type="void">
+  Send data to terminal. Accepts `string` or `ArrayBuffer`.
+</ParamField>
+
+<ParamField path="onData(handler)" type="void">
+  Register handler for incoming data.
+</ParamField>
+
+<ParamField path="onClose(handler)" type="void">
+  Register handler for connection close.
+</ParamField>
+
+<ParamField path="onError(handler)" type="void">
+  Register handler for errors.
+</ParamField>
+
+<ParamField path="resize(cols, rows)" type="void">
+  Resize the terminal.
+</ParamField>
+
+<ParamField path="close()" type="void">
+  Close the terminal connection.
+</ParamField>
+
+<ParamField path="readyState" type="number">
+  WebSocket ready state.
+</ParamField>
+
+## Best Practices
+
+<Note>
+**Reuse Clients** - Create one client instance and reuse it to improve performance.
+</Note>
+
+<Note>
+**Handle Errors** - Always wrap API calls in try-catch blocks and handle `RexecError`.
+</Note>
+
+<Note>
+**Clean Up Resources** - Delete containers when done:
+```typescript
+try {
+  // Use container
+} finally {
+  await client.containers.delete(container.id);
+}
+```
+</Note>
+
+<Note>
+**Close Terminals** - Always close terminal connections to free WebSocket resources:
+```typescript
+const terminal = await client.terminal.connect(containerId);
+try {
+  // Use terminal
+} finally {
+  terminal.close();
+}
+```
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Python SDK" icon="python" href="/sdks/python">
+    Explore the Python SDK
+  </Card>
+  <Card title="Go SDK" icon="golang" href="/sdks/go">
+    Check out the Go SDK
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    View complete API documentation
+  </Card>
+  <Card title="Examples" icon="code" href="/examples">
+    Browse more code examples
+  </Card>
+</CardGroup>

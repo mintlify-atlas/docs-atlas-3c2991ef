@@ -1,0 +1,615 @@
+---
+title: Session Recording
+description: Record and replay terminal sessions in asciinema format for documentation, debugging, and audit trails
+---
+
+## Overview
+
+Rexec Session Recording captures every keystroke and output from your terminal sessions, storing them in industry-standard asciinema format. Play back recordings at variable speeds, share them with your team, or maintain them as audit logs for compliance.
+
+<Info>
+Recordings capture terminal I/O in text format, not video - resulting in small file sizes and searchable content.
+</Info>
+
+## How It Works
+
+When you start recording:
+
+1. **Recording starts**: Button click or API call begins capture
+2. **Events captured**: All output, input, and resize events are timestamped
+3. **Storage**: Events stored in-memory until recording stops
+4. **Finalization**: Recording serialized to asciinema v2 format
+5. **Upload**: Saved to database, S3, or Cloudflare R2 for CDN delivery
+
+<CardGroup cols={2}>
+  <Card title="Asciinema Format" icon="file-code">
+    Industry-standard format, playable in any asciinema player
+  </Card>
+  <Card title="Cloud Storage" icon="cloud">
+    Optional S3 or R2 storage for scalability
+  </Card>
+  <Card title="Searchable" icon="magnifying-glass">
+    Text-based format allows content searching
+  </Card>
+  <Card title="Small Files" icon="file-zipper">
+    Minutes of recording = kilobytes (vs GB for video)
+  </Card>
+</CardGroup>
+
+## Starting a Recording
+
+### From the Dashboard
+
+1. Open any terminal (cloud container or agent)
+2. Click the **Record** button in the terminal header
+3. Enter a title for the recording (optional)
+4. Recording begins immediately - a red indicator shows active state
+5. Click **Stop Recording** when done
+
+### Via API
+
+<CodeGroup>
+```bash cURL
+# Start recording
+curl -X POST https://your-instance.com/api/recordings/start \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "container_id": "abc123...",
+    "title": "Debugging Production Issue #142"
+  }'
+
+# Response
+{
+  "recording_id": "rec_xyz789",
+  "started_at": "2024-03-15T14:30:00Z",
+  "container_id": "abc123...",
+  "message": "Recording started"
+}
+
+# Stop recording
+curl -X POST https://your-instance.com/api/recordings/rec_xyz789/stop \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```go Go SDK
+// Start recording
+recording, err := client.Recordings.Start(ctx, &rexec.StartRecordingRequest{
+    ContainerID: containerID,
+    Title:       "Production Debug Session",
+})
+
+fmt.Printf("Recording ID: %s\n", recording.ID)
+
+// Do work in terminal...
+time.Sleep(5 * time.Minute)
+
+// Stop recording
+final, err := client.Recordings.Stop(ctx, recording.ID)
+fmt.Printf("Duration: %.2fs\n", final.Duration)
+```
+
+```typescript TypeScript SDK
+// Start recording
+const recording = await client.recordings.start({
+  container_id: containerId,
+  title: 'Demo: Building a REST API'
+});
+
+console.log('Recording:', recording.recording_id);
+
+// Work in terminal...
+await sleep(300000); // 5 minutes
+
+// Stop recording
+const final = await client.recordings.stop(recording.recording_id);
+console.log(`Recorded ${final.event_count} events`);
+```
+
+```python Python SDK
+# Start recording
+recording = await client.recordings.start(
+    container_id=container_id,
+    title="Team Training: Kubernetes Basics"
+)
+
+print(f"Recording: {recording.recording_id}")
+
+# Terminal work happens...
+await asyncio.sleep(300)
+
+# Stop recording
+final = await client.recordings.stop(recording.recording_id)
+print(f"Duration: {final.duration}s")
+```
+</CodeGroup>
+
+## Recording Format
+
+### Asciinema v2 Specification
+
+From `internal/api/handlers/recording.go:54`:
+
+```go
+type RecordingMetadata struct {
+    Version   int               `json:"version"`    // 2 (asciinema v2)
+    Width     int               `json:"width"`      // Terminal columns
+    Height    int               `json:"height"`     // Terminal rows
+    Timestamp time.Time         `json:"timestamp"` // Recording start time
+    Duration  float64           `json:"duration"`  // Total duration in seconds
+    Title     string            `json:"title"`
+    Env       map[string]string `json:"env,omitempty"`
+}
+```
+
+### Event Structure
+
+```go
+type RecordingEvent struct {
+    Time int64  `json:"t"`           // Milliseconds since start
+    Type string `json:"e"`           // "o" (output), "i" (input), "r" (resize)
+    Data string `json:"d"`           // Event data
+    Cols int    `json:"c,omitempty"` // For resize events
+    Rows int    `json:"r,omitempty"` // For resize events
+}
+```
+
+**Example Recording File:**
+
+```json
+{"version":2,"width":120,"height":30,"timestamp":"2024-03-15T14:30:00Z","duration":120.5,"title":"Production Debug"}
+[0.123, "o", "$ "]
+[0.845, "i", "ls -la"]
+[0.847, "o", "ls -la"]
+[0.912, "o", "\r\ntotal 48\r\ndrwxr-xr-x 1 user user 4096 Mar 15 14:30 .\r\n"]
+[5.234, "r", "", 150, 40]
+[120.456, "o", "$ exit\r\n"]
+```
+
+First line is header (metadata), subsequent lines are events: `[timestamp, type, data, cols?, rows?]`.
+
+## Storage Options
+
+From `internal/api/handlers/recording.go:64`:
+
+### Priority Order
+
+1. **Cloudflare R2** (preferred for global CDN)
+2. **AWS S3** or S3-compatible (MinIO, DigitalOcean Spaces)
+3. **PostgreSQL** (fallback, stores in database)
+
+<Tabs>
+  <Tab title="Cloudflare R2">
+    Best option for global delivery with zero egress fees:
+    
+    ```bash
+    # Environment variables
+    R2_ACCOUNT_ID=your-account-id
+    R2_ACCESS_KEY_ID=your-access-key
+    R2_SECRET_ACCESS_KEY=your-secret-key
+    R2_BUCKET=rexec-recordings
+    R2_PUBLIC_DOMAIN=recordings.example.com  # Custom domain
+    ```
+    
+    **Benefits:**
+    - Global CDN delivery
+    - Zero egress charges
+    - Fast playback worldwide
+    - Automatic HTTPS
+  </Tab>
+  
+  <Tab title="AWS S3">
+    Standard S3 storage:
+    
+    ```bash
+    # Environment variables
+    S3_BUCKET=rexec-recordings
+    S3_REGION=us-east-1
+    S3_ACCESS_KEY_ID=your-access-key
+    S3_SECRET_ACCESS_KEY=your-secret-key
+    S3_PREFIX=recordings/  # Optional prefix
+    ```
+    
+    Works with any S3-compatible service (MinIO, Wasabi, etc.)
+  </Tab>
+  
+  <Tab title="PostgreSQL">
+    Database storage (used if S3/R2 not configured):
+    
+    ```bash
+    # No additional config needed
+    # Recordings stored in `recordings` table
+    # Good for: Small deployments, testing
+    ```
+    
+    **Limitations:**
+    - Slower for large files
+    - Increases database size
+    - No CDN delivery
+  </Tab>
+</Tabs>
+
+### Storage Implementation
+
+From `internal/storage/s3.go:104`:
+
+```go
+func (s *S3Store) PutRecording(ctx context.Context, recordingID string, data []byte) error {
+    key := s.prefix + recordingID + ".cast"
+    
+    _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+        Bucket:      aws.String(s.bucket),
+        Key:         aws.String(key),
+        Body:        bytes.NewReader(data),
+        ContentType: aws.String("application/x-asciicast"),
+    })
+    
+    return err
+}
+```
+
+Recordings stored with `.cast` extension and `application/x-asciicast` MIME type.
+
+## Playback
+
+### In Dashboard
+
+1. Navigate to **Recordings** in the sidebar
+2. Click any recording to open the player
+3. Player controls:
+   - **Play/Pause**: Space bar or click button
+   - **Speed**: 0.5x, 1x, 2x, 4x playback speed
+   - **Seek**: Click progress bar to jump
+   - **Fullscreen**: Expand to full browser window
+
+### Embed in Webpage
+
+```html
+<!-- Include asciinema player -->
+<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.7.0/dist/bundle/asciinema-player.min.css" />
+<script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.7.0/dist/bundle/asciinema-player.min.js"></script>
+
+<!-- Player container -->
+<div id="demo"></div>
+
+<!-- Initialize player -->
+<script>
+  AsciinemaPlayer.create(
+    'https://your-instance.com/api/recordings/rec_xyz789/download',
+    document.getElementById('demo'),
+    {
+      speed: 2,
+      theme: 'monokai',
+      poster: 'npt:0:05'
+    }
+  );
+</script>
+```
+
+### CLI Playback
+
+```bash
+# Download recording
+curl -H "Authorization: Bearer $TOKEN" \
+  https://your-instance.com/api/recordings/rec_xyz789/download \
+  -o recording.cast
+
+# Play with asciinema
+asciinema play recording.cast
+
+# Play at 2x speed
+asciinema play -s 2 recording.cast
+```
+
+## Active Recording Management
+
+From `internal/api/handlers/recording.go:29`:
+
+```go
+type RecordingHandler struct {
+    recordings map[string]*ActiveRecording  // containerID -> recording
+}
+
+type ActiveRecording struct {
+    ID          string
+    ContainerID string
+    UserID      string
+    Title       string
+    StartedAt   time.Time
+    Events      []RecordingEvent
+}
+```
+
+### Adding Events
+
+From `internal/api/handlers/recording.go:183`:
+
+```go
+func (h *RecordingHandler) AddEvent(containerID, eventType, data string, cols, rows int) {
+    h.mu.RLock()
+    recording, exists := h.recordings[containerID]
+    h.mu.RUnlock()
+    
+    if !exists {
+        return  // No active recording
+    }
+    
+    elapsed := time.Since(recording.StartedAt).Milliseconds()
+    
+    event := RecordingEvent{
+        Time: elapsed,
+        Type: eventType,
+        Data: data,
+        Cols: cols,
+        Rows: rows,
+    }
+    
+    recording.mu.Lock()
+    recording.Events = append(recording.Events, event)
+    recording.mu.Unlock()
+}
+```
+
+Events are captured automatically from the terminal WebSocket stream.
+
+## Use Cases
+
+<Tabs>
+  <Tab title="Documentation">
+    **Scenario**: Creating tutorials or demos
+    
+    ```bash
+    # Start recording
+    rexec recordings start --title "Tutorial: Docker Basics"
+    
+    # Perform demonstration
+    docker run hello-world
+    docker ps
+    docker images
+    docker --help
+    
+    # Stop recording
+    rexec recordings stop
+    
+    # Embed in documentation
+    # Share link with team
+    ```
+    
+    **Benefits:**
+    - Better than static screenshots
+    - Shows real-time workflow
+    - Viewers can copy commands
+  </Tab>
+  
+  <Tab title="Debugging Records">
+    **Scenario**: Capturing bug reproduction
+    
+    ```bash
+    # Start recording when bug occurs
+    rexec recordings start --title "Bug #142: Auth Failure"
+    
+    # Reproduce issue
+    curl -X POST /api/login
+    # Check logs, inspect state
+    
+    # Stop recording
+    # Attach to bug report
+    ```
+    
+    **Benefits:**
+    - Complete context for developers
+    - Exact commands and output
+    - No ambiguity in reproduction steps
+  </Tab>
+  
+  <Tab title="Compliance & Audit">
+    **Scenario**: Regulatory compliance requiring audit trails
+    
+    ```bash
+    # Auto-record all production access
+    # (Configure via policy)
+    
+    # Agent connects to production server
+    # Recording starts automatically
+    
+    # All commands logged:
+    sudo su postgres
+    psql -c "SELECT * FROM sensitive_data LIMIT 10"
+    
+    # Recording saved for compliance review
+    # Retention: 7 years per policy
+    ```
+    
+    **Benefits:**
+    - Proof of actions taken
+    - Investigate security incidents
+    - Meet regulatory requirements (SOC2, HIPAA, etc.)
+  </Tab>
+  
+  <Tab title="Training Materials">
+    **Scenario**: Recording onboarding tutorials
+    
+    ```bash
+    # Record setup process
+    rexec recordings start --title "Onboarding: Dev Environment Setup"
+    
+    # Walk through entire setup
+    git clone repo
+    npm install
+    npm run dev
+    # Explain each step verbally (captured separately)
+    
+    # Stop and share with new hires
+    ```
+    
+    **Benefits:**
+    - Reusable training content
+    - Consistent onboarding
+    - New hires can follow at own pace
+  </Tab>
+</Tabs>
+
+## Security & Privacy
+
+### Recording Permissions
+
+- Only **terminal owner** can start/stop recordings
+- Recordings inherit owner's permissions
+- Participants in collaboration sessions are also recorded
+
+<Warning>
+Recordings capture **all terminal output**, including potential secrets. Avoid recording sessions where sensitive data (passwords, API keys) may appear.
+</Warning>
+
+### Redaction
+
+Rexec does not automatically redact sensitive data. Best practices:
+
+1. **Use environment variables** instead of hardcoded secrets
+2. **Clear screen** before recording sensitive operations
+3. **Edit recordings** post-capture to remove sensitive frames
+4. **Use separate terminals** for secret-heavy operations
+
+### Access Control
+
+```bash
+# Only owner can access recordings
+GET /api/recordings/rec_xyz789
+# Requires: Authorization header with owner's token
+
+# Sharing recordings
+# Generate presigned URL (S3/R2 only)
+GET /api/recordings/rec_xyz789/share?expires=3600
+# Returns: Temporary URL valid for 1 hour
+```
+
+## API Reference
+
+### Start Recording
+
+```http
+POST /api/recordings/start
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "container_id": "abc123...",
+  "title": "Recording Title"
+}
+```
+
+### Stop Recording
+
+```http
+POST /api/recordings/{recording_id}/stop
+Authorization: Bearer <token>
+```
+
+**Response:**
+
+```json
+{
+  "recording_id": "rec_xyz789",
+  "duration": 120.5,
+  "event_count": 1523,
+  "file_size": 45678,
+  "storage_url": "https://r2.example.com/recordings/rec_xyz789.cast"
+}
+```
+
+### List Recordings
+
+```http
+GET /api/recordings?container_id=abc123&limit=20
+Authorization: Bearer <token>
+```
+
+### Download Recording
+
+```http
+GET /api/recordings/{recording_id}/download
+Authorization: Bearer <token>
+```
+
+Returns `.cast` file in asciinema format.
+
+### Delete Recording
+
+```http
+DELETE /api/recordings/{recording_id}
+Authorization: Bearer <token>
+```
+
+### Get Presigned URL
+
+```http
+GET /api/recordings/{recording_id}/share?expires=3600
+Authorization: Bearer <token>
+```
+
+Generates temporary download URL (S3/R2 only).
+
+## Best Practices
+
+<Card title="Title Your Recordings" icon="tag">
+  Use descriptive titles like "Bug #142 Reproduction" or "Q1 Demo"
+</Card>
+
+<Card title="Keep Recordings Short" icon="clock">
+  Split long sessions into multiple recordings (5-10 minutes each)
+</Card>
+
+<Card title="Clean Up Old Recordings" icon="trash">
+  Set retention policies and delete recordings you no longer need
+</Card>
+
+<Card title="Use Cloud Storage" icon="cloud">
+  Configure S3 or R2 for better performance and scalability
+</Card>
+
+## Troubleshooting
+
+### Recording Not Capturing Output
+
+From `internal/api/handlers/recording.go:192`:
+
+```go
+// Debug: Container ID mismatch
+if activeCount > 0 && eventType == "o" && len(data) > 0 {
+    log.Printf("Event for non-recorded container %s (active: %v)", 
+        containerID[:12], activeIDs)
+}
+```
+
+Check logs for container ID mismatches. Use resolved Docker ID, not terminal name.
+
+### Recording File Too Large
+
+Optimize by:
+1. Avoiding commands with massive output (`cat large-file`)
+2. Clearing screen periodically (`clear`)
+3. Using pagination (`less` instead of `cat`)
+
+### Playback Not Working
+
+Verify:
+1. Recording was properly stopped (not interrupted)
+2. Storage backend is accessible
+3. asciinema player JS loaded correctly
+
+## Related Features
+
+<CardGroup cols={2}>
+  <Card title="Cloud Terminals" icon="cloud" href="/features/cloud-terminals">
+    Record cloud terminal sessions
+  </Card>
+  <Card title="BYOS Agents" icon="server" href="/features/agents">
+    Record agent terminal sessions
+  </Card>
+  <Card title="Collaboration" icon="users" href="/features/collaboration">
+    Recordings capture all participants
+  </Card>
+  <Card title="Security" icon="lock" href="/features/security">
+    Audit logs complement recordings
+  </Card>
+</CardGroup>

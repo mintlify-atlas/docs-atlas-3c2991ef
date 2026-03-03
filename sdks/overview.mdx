@@ -1,0 +1,386 @@
+---
+title: SDK Overview
+description: Official SDKs for integrating Rexec into your applications in 8 programming languages
+---
+
+Rexec provides official SDKs for programmatically interacting with your sandboxed environments. All SDKs wrap the same REST API and WebSocket endpoints, providing a consistent experience across languages.
+
+## Available SDKs
+
+<CardGroup cols={2}>
+  <Card title="Go" icon="golang" href="#go">
+    Idiomatic Go with context support
+  </Card>
+  <Card title="JavaScript/TypeScript" icon="js" href="#javascript-typescript">
+    Promise-based async API with full TypeScript support
+  </Card>
+  <Card title="Python" icon="python" href="#python">
+    Async/await with httpx and websockets
+  </Card>
+  <Card title="Rust" icon="rust" href="#rust">
+    Tokio-based async runtime with builder patterns
+  </Card>
+  <Card title="Ruby" icon="gem" href="#ruby">
+    Faraday HTTP with WebSocket support
+  </Card>
+  <Card title="Java" icon="java" href="#java">
+    OkHttp with WebSocket
+  </Card>
+  <Card title=".NET" icon="microsoft" href="#net">
+    Native async/await patterns with cancellation tokens
+  </Card>
+  <Card title="PHP" icon="php" href="#php">
+    Guzzle HTTP with ReactPHP WebSocket
+  </Card>
+</CardGroup>
+
+## SDK Comparison
+
+| SDK | Package Name | Latest Version | Async Support | WebSocket |
+|-----|--------------|----------------|---------------|----------|
+| Go | `github.com/PipeOpsHQ/rexec-go` | 1.0.0 | Context-based | ✓ |
+| JavaScript/TypeScript | `@pipeopshq/rexec` | 1.0.0 | Promises | ✓ |
+| Python | `rexec` | 1.0.0 | async/await | ✓ |
+| Rust | `rexec` | 1.0.0 | Tokio | ✓ |
+| Ruby | `rexec` | 1.0.0 | No | ✓ |
+| Java | `io.pipeops:rexec` | 1.0.0 | No | ✓ |
+| .NET | `Rexec` | 1.0.0 | async/await | ✓ |
+| PHP | `pipeopshq/rexec` | 1.0.0 | ReactPHP | ✓ |
+
+## Installation
+
+### Go
+
+```bash
+go get github.com/PipeOpsHQ/rexec-go
+```
+
+### JavaScript/TypeScript
+
+<CodeGroup>
+```bash npm
+npm install @pipeopshq/rexec
+```
+
+```bash yarn
+yarn add @pipeopshq/rexec
+```
+
+```bash pnpm
+pnpm add @pipeopshq/rexec
+```
+</CodeGroup>
+
+For Node.js environments, you'll also need:
+```bash
+npm install ws
+```
+
+### Python
+
+```bash
+pip install rexec
+```
+
+**Requirements:** Python 3.9+, httpx, websockets
+
+### Rust
+
+```toml
+[dependencies]
+rexec = "1.0"
+tokio = { version = "1", features = ["full"] }
+```
+
+### Ruby
+
+<CodeGroup>
+```ruby Gemfile
+gem 'rexec'
+```
+
+```bash gem
+gem install rexec
+```
+</CodeGroup>
+
+**Requirements:** Ruby 3.0+, faraday, websocket-client-simple
+
+### Java
+
+**Requirements:** Java 17 or later
+
+<CodeGroup>
+```xml Maven
+<dependency>
+    <groupId>io.pipeops</groupId>
+    <artifactId>rexec</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
+```groovy Gradle
+implementation 'io.pipeops:rexec:1.0.0'
+```
+</CodeGroup>
+
+### .NET
+
+**Requirements:** .NET 8.0 or later
+
+<CodeGroup>
+```bash dotnet
+dotnet add package Rexec
+```
+
+```powershell Package Manager
+Install-Package Rexec
+```
+</CodeGroup>
+
+### PHP
+
+**Requirements:** PHP 8.1 or later
+
+```bash
+composer require pipeopshq/rexec
+```
+
+## Core Features
+
+All SDKs provide access to these core features:
+
+<CardGroup cols={2}>
+  <Card title="Container Management" icon="box">
+    Create, start, stop, and delete isolated Linux environments
+  </Card>
+  <Card title="Terminal Sessions" icon="terminal">
+    Real-time WebSocket connections with full PTY support
+  </Card>
+  <Card title="File Operations" icon="folder">
+    List, upload, download, and manage files in containers
+  </Card>
+  <Card title="Command Execution" icon="play">
+    Execute commands and capture stdout/stderr/exit codes
+  </Card>
+</CardGroup>
+
+## Quick Start Examples
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    package main
+
+    import (
+        "context"
+        "fmt"
+        "os"
+        rexec "github.com/PipeOpsHQ/rexec-go"
+    )
+
+    func main() {
+        client := rexec.NewClient(
+            os.Getenv("REXEC_URL"),
+            os.Getenv("REXEC_TOKEN"),
+        )
+
+        ctx := context.Background()
+
+        // Create a sandbox
+        container, _ := client.Containers.Create(ctx, &rexec.CreateContainerRequest{
+            Image: "ubuntu:24.04",
+        })
+
+        // Connect to terminal
+        term, _ := client.Terminal.Connect(ctx, container.ID)
+        defer term.Close()
+
+        term.Write([]byte("echo 'Hello World'\n"))
+    }
+    ```
+  </Tab>
+  
+  <Tab title="JavaScript">
+    ```typescript
+    import { RexecClient } from '@pipeopshq/rexec';
+
+    const client = new RexecClient({
+      baseURL: process.env.REXEC_URL,
+      token: process.env.REXEC_TOKEN,
+    });
+
+    // Create a sandbox
+    const container = await client.containers.create({
+      image: 'ubuntu:24.04',
+    });
+
+    // Connect to terminal
+    const terminal = await client.terminal.connect(container.id);
+    terminal.write('echo "Hello World"\n');
+    terminal.onData((data) => console.log(data));
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    import asyncio
+    from rexec import RexecClient
+
+    async def main():
+        async with RexecClient(
+            base_url=os.environ["REXEC_URL"],
+            token=os.environ["REXEC_TOKEN"]
+        ) as client:
+            # Create a sandbox
+            container = await client.containers.create("ubuntu:24.04")
+            
+            # Execute a command
+            result = await client.containers.exec(container.id, "echo 'Hello World'")
+            print(result.stdout)
+
+    asyncio.run(main())
+    ```
+  </Tab>
+  
+  <Tab title="Rust">
+    ```rust
+    use rexec::RexecClient;
+
+    #[tokio::main]
+    async fn main() -> Result<(), rexec::Error> {
+        let client = RexecClient::new(
+            std::env::var("REXEC_URL")?,
+            std::env::var("REXEC_TOKEN")?
+        )?;
+
+        // Create a sandbox
+        let container = client.containers()
+            .create("ubuntu:24.04")
+            .await?;
+
+        // Connect to terminal
+        let mut term = client.terminal()
+            .connect(&container.id)
+            .await?;
+
+        term.write(b"echo 'Hello World'\n").await?;
+        Ok(())
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Ruby">
+    ```ruby
+    require 'rexec'
+
+    client = Rexec::Client.new(
+      ENV['REXEC_URL'],
+      ENV['REXEC_TOKEN']
+    )
+
+    # Create a sandbox
+    container = client.containers.create('ubuntu:24.04')
+
+    # Execute a command
+    result = client.containers.exec(container.id, "echo 'Hello World'")
+    puts result.stdout
+    ```
+  </Tab>
+  
+  <Tab title="Java">
+    ```java
+    import io.pipeops.rexec.*;
+
+    public class Example {
+        public static void main(String[] args) throws RexecException {
+            RexecClient client = new RexecClient(
+                System.getenv("REXEC_URL"),
+                System.getenv("REXEC_TOKEN")
+            );
+
+            // Create a sandbox
+            Container container = client.containers().create("ubuntu:24.04");
+
+            // Execute a command
+            ExecResult result = client.containers().exec(
+                container.getId(), "echo 'Hello World'"
+            );
+            System.out.println(result.getStdout());
+        }
+    }
+    ```
+  </Tab>
+  
+  <Tab title=".NET">
+    ```csharp
+    using Rexec;
+
+    var client = new RexecClient(
+        Environment.GetEnvironmentVariable("REXEC_URL"),
+        Environment.GetEnvironmentVariable("REXEC_TOKEN")
+    );
+
+    // Create a sandbox
+    var container = await client.Containers.CreateAsync("ubuntu:24.04");
+
+    // Execute a command
+    var result = await client.Containers.ExecAsync(
+        container.Id, "echo 'Hello World'"
+    );
+    Console.WriteLine(result.Stdout);
+    ```
+  </Tab>
+  
+  <Tab title="PHP">
+    ```php
+    <?php
+    require 'vendor/autoload.php';
+
+    use Rexec\RexecClient;
+
+    $client = new RexecClient(
+        getenv('REXEC_URL'),
+        getenv('REXEC_TOKEN')
+    );
+
+    // Create a sandbox
+    $container = $client->containers()->create('ubuntu:24.04');
+
+    // Execute a command
+    $result = $client->containers()->exec($container->id, "echo 'Hello World'");
+    echo $result->stdout;
+    ```
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start Guide" icon="rocket" href="/sdks/quickstart">
+    Complete walkthrough of basic SDK usage
+  </Card>
+  <Card title="Authentication" icon="key" href="/sdks/authentication">
+    Set up API tokens and secure your credentials
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    Detailed documentation of all API endpoints
+  </Card>
+  <Card title="Use Cases" icon="lightbulb" href="/guides/use-cases">
+    Real-world examples and integration patterns
+  </Card>
+</CardGroup>
+
+## Support
+
+<CardGroup cols={3}>
+  <Card title="GitHub Issues" icon="github" href="https://github.com/PipeOpsHQ/rexec/issues">
+    Report bugs and request features
+  </Card>
+  <Card title="Discussions" icon="comments" href="https://github.com/PipeOpsHQ/rexec/discussions">
+    Ask questions and share ideas
+  </Card>
+  <Card title="Source Code" icon="code" href="https://github.com/PipeOpsHQ/rexec">
+    View SDK source code and contribute
+  </Card>
+</CardGroup>

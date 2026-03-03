@@ -1,0 +1,707 @@
+---
+title: Python SDK
+description: Official Python SDK for Rexec - Build container orchestration with async/await and modern Python
+---
+
+## Installation
+
+Install the Python SDK using pip:
+
+```bash
+pip install rexec
+```
+
+**Requirements:** Python 3.9 or later
+
+**Dependencies:** 
+- `httpx` for HTTP requests
+- `websockets` for terminal connections
+
+## Quick Start
+
+```python
+import asyncio
+from rexec import RexecClient
+
+async def main():
+    async with RexecClient(
+        base_url="https://your-instance.com",
+        token="your-api-token"
+    ) as client:
+        # Create a container
+        container = await client.containers.create(
+            image="ubuntu:24.04",
+            name="my-sandbox"
+        )
+        print(f"Created container: {container.id}")
+
+        # Connect to terminal
+        async with client.terminal.connect(container.id) as term:
+            await term.write(b"echo 'Hello from Rexec!'\n")
+            
+            # Read output
+            data = await term.read()
+            print(data.decode())
+
+        # Clean up
+        await client.containers.delete(container.id)
+
+asyncio.run(main())
+```
+
+## Client Initialization
+
+### Using Context Manager (Recommended)
+
+The context manager pattern ensures proper cleanup:
+
+```python
+from rexec import RexecClient
+import os
+
+async with RexecClient(
+    base_url=os.environ["REXEC_URL"],
+    token=os.environ["REXEC_TOKEN"],
+    timeout=30.0,  # optional timeout in seconds
+) as client:
+    # Use client
+    containers = await client.containers.list()
+```
+
+### Manual Management
+
+For more control, manage the client lifecycle manually:
+
+```python
+client = RexecClient("https://your-instance.com", "your-token")
+try:
+    containers = await client.containers.list()
+finally:
+    await client.close()
+```
+
+## Container Operations
+
+The `containers` service provides methods for managing sandboxed environments.
+
+### Create Container
+
+<CodeGroup>
+```python Basic
+container = await client.containers.create(
+    image="ubuntu:24.04"
+)
+```
+
+```python With Options
+container = await client.containers.create(
+    image="python:3.12",
+    name="my-python-sandbox",
+    environment={
+        "PYTHONPATH": "/app",
+        "API_KEY": os.environ["API_KEY"],
+    },
+    labels={
+        "project": "demo",
+        "owner": "engineering",
+    }
+)
+```
+</CodeGroup>
+
+### List Containers
+
+```python
+containers = await client.containers.list()
+
+for c in containers:
+    print(f"{c.name}: {c.status}")
+```
+
+### Get Container
+
+```python
+from rexec import RexecAPIError
+
+try:
+    container = await client.containers.get(container_id)
+    
+    print(f"Container: {container.name}")
+    print(f"Status: {container.status}")
+    print(f"Created: {container.created_at}")
+except RexecAPIError as e:
+    print(f"API Error {e.status_code}: {e}")
+```
+
+### Lifecycle Management
+
+<CodeGroup>
+```python Start
+await client.containers.start(container_id)
+print("Container started")
+```
+
+```python Stop
+await client.containers.stop(container_id)
+print("Container stopped")
+```
+
+```python Delete
+await client.containers.delete(container_id)
+print("Container deleted")
+```
+</CodeGroup>
+
+## File Operations
+
+The `files` service enables file management within containers.
+
+### List Files
+
+```python
+files = await client.files.list(container_id, "/home")
+
+for f in files:
+    icon = "📁" if f.is_dir else "📄"
+    print(f"{icon} {f.name} ({f.size} bytes)")
+```
+
+### Download Files
+
+```python
+# Download file as bytes
+content = await client.files.download(container_id, "/etc/passwd")
+print(content.decode())
+
+# Save to local file
+with open("passwd.txt", "wb") as f:
+    f.write(content)
+```
+
+### Upload Files
+
+```python
+# Upload from bytes
+script = b"print('hello world')"
+await client.files.upload(
+    container_id,
+    "/home/script.py",
+    script
+)
+
+# Upload from file
+with open("local_file.txt", "rb") as f:
+    content = f.read()
+    await client.files.upload(container_id, "/home/remote.txt", content)
+```
+
+### Create Directory
+
+```python
+await client.files.mkdir(container_id, "/home/mydir")
+print("Directory created")
+```
+
+### Delete File
+
+```python
+await client.files.delete(container_id, "/home/script.py")
+print("File deleted")
+```
+
+## Terminal Connections
+
+The `terminal` service provides WebSocket-based terminal access with full PTY support.
+
+### Connect to Terminal
+
+Using context manager (recommended):
+
+```python
+async with client.terminal.connect(
+    container_id,
+    cols=120,
+    rows=40,
+    timeout=30.0
+) as term:
+    await term.write(b"ls -la\n")
+    output = await term.read()
+    print(output.decode())
+```
+
+### Send Commands
+
+```python
+async with client.terminal.connect(container_id) as term:
+    # Send a simple command
+    await term.write(b"ls -la\n")
+    
+    # Send multiple commands
+    commands = [
+        b"cd /app\n",
+        b"pip install -r requirements.txt\n",
+        b"python main.py\n",
+    ]
+    
+    for cmd in commands:
+        await term.write(cmd)
+```
+
+### Read Output
+
+```python
+# Read once
+output = await term.read()
+print(output.decode())
+
+# Read continuously with async iteration
+async with client.terminal.connect(container_id) as term:
+    await term.write(b"echo hello && sleep 1 && echo world\n")
+    
+    async for data in term:
+        print(data.decode(), end="")
+```
+
+### Resize Terminal
+
+```python
+await term.resize(150, 50)
+```
+
+## Error Handling
+
+The SDK provides structured exception handling:
+
+```python
+from rexec import RexecClient, RexecAPIError, RexecConnectionError
+
+try:
+    container = await client.containers.get("invalid-id")
+except RexecAPIError as e:
+    # API errors (4xx, 5xx)
+    if e.status_code == 404:
+        print("Container not found")
+    elif e.status_code == 401:
+        print("Authentication failed")
+    else:
+        print(f"API Error {e.status_code}: {e.message}")
+except RexecConnectionError as e:
+    # Network/connection errors
+    print(f"Connection Error: {e}")
+except Exception as e:
+    # Other errors
+    print(f"Unexpected error: {e}")
+```
+
+## Type Hints
+
+The SDK is fully typed for excellent IDE support:
+
+```python
+from rexec import (
+    RexecClient,
+    Container,
+    CreateContainerRequest,
+    FileInfo,
+    Terminal,
+)
+
+container: Container = await client.containers.create(image="ubuntu:24.04")
+files: list[FileInfo] = await client.files.list(container.id, "/")
+```
+
+## Complete Examples
+
+### CI/CD Test Runner
+
+```python
+import asyncio
+from rexec import RexecClient
+
+async def run_ci_tests(image: str, commands: list[str]):
+    async with RexecClient(
+        base_url=os.environ["REXEC_URL"],
+        token=os.environ["REXEC_TOKEN"]
+    ) as client:
+        # Create test container
+        container = await client.containers.create(
+            image=image,
+            environment={"CI": "true"}
+        )
+        
+        try:
+            await client.containers.start(container.id)
+            
+            # Connect to terminal
+            async with client.terminal.connect(container.id) as term:
+                # Run each command
+                for cmd in commands:
+                    await term.write(f"{cmd}\n".encode())
+                    
+                    # Capture output
+                    output = []
+                    async for data in term:
+                        output.append(data.decode())
+                        if b"$" in data:  # Wait for prompt
+                            break
+                    
+                    print("".join(output))
+            
+            return True
+        finally:
+            await client.containers.delete(container.id)
+
+# Usage
+asyncio.run(run_ci_tests("node:20", [
+    "npm install",
+    "npm test",
+]))
+```
+
+### Batch Container Operations
+
+```python
+import asyncio
+from rexec import RexecClient, Container
+
+async def create_batch(client: RexecClient, count: int) -> list[Container]:
+    """Create multiple containers in parallel."""
+    tasks = [
+        client.containers.create(
+            image="ubuntu:24.04",
+            name=f"worker-{i}"
+        )
+        for i in range(count)
+    ]
+    
+    return await asyncio.gather(*tasks)
+
+# Usage
+async with RexecClient(base_url, token) as client:
+    containers = await create_batch(client, 5)
+    print(f"Created {len(containers)} containers")
+```
+
+### File Sync Utility
+
+```python
+import os
+from pathlib import Path
+from rexec import RexecClient
+
+async def sync_directory(
+    client: RexecClient,
+    container_id: str,
+    local_path: Path,
+    remote_path: str
+):
+    """Recursively sync a local directory to a container."""
+    await client.files.mkdir(container_id, remote_path)
+    
+    for item in local_path.iterdir():
+        remote_item = f"{remote_path}/{item.name}"
+        
+        if item.is_file():
+            content = item.read_bytes()
+            await client.files.upload(container_id, remote_item, content)
+            print(f"Uploaded: {remote_item}")
+        elif item.is_dir():
+            await sync_directory(client, container_id, item, remote_item)
+
+# Usage
+async with RexecClient(base_url, token) as client:
+    container = await client.containers.create(image="ubuntu:24.04")
+    await sync_directory(
+        client,
+        container.id,
+        Path("./my_project"),
+        "/home/project"
+    )
+```
+
+### ML Training Job Manager
+
+```python
+import asyncio
+from rexec import RexecClient
+import os
+
+async def run_training_job(model_config: dict):
+    async with RexecClient(base_url, token) as client:
+        # Create GPU-enabled container
+        container = await client.containers.create(
+            image="pytorch/pytorch:2.0-cuda11.7-cudnn8-runtime",
+            name=f"training-{model_config['name']}",
+            environment={
+                "CUDA_VISIBLE_DEVICES": "0",
+                "WANDB_API_KEY": os.environ["WANDB_API_KEY"],
+            },
+            labels={
+                "job": model_config["name"],
+                "type": "training",
+            }
+        )
+        
+        try:
+            await client.containers.start(container.id)
+            
+            # Upload training script
+            await client.files.upload(
+                container.id,
+                "/workspace/train.py",
+                model_config["script"].encode()
+            )
+            
+            # Run training
+            async with client.terminal.connect(container.id) as term:
+                await term.write(b"python /workspace/train.py\n")
+                
+                # Stream output
+                async for data in term:
+                    print(data.decode(), end="")
+            
+            # Download trained model
+            model_data = await client.files.download(
+                container.id,
+                "/workspace/model.pth"
+            )
+            
+            return model_data
+        finally:
+            await client.containers.delete(container.id)
+```
+
+### Education Platform
+
+```python
+from dataclasses import dataclass
+from rexec import RexecClient, Container
+
+@dataclass
+class AssignmentResult:
+    passed: bool
+    output: str
+    score: int
+
+class StudentSandbox:
+    def __init__(self, base_url: str, token: str):
+        self.client = RexecClient(base_url, token)
+    
+    async def create_for_student(
+        self,
+        student_id: str,
+        course_id: str,
+        starter_code: str
+    ) -> Container:
+        """Create a sandbox for a student with starter code."""
+        container = await self.client.containers.create(
+            image="python:3.12",
+            name=f"student-{student_id}-{course_id}",
+            labels={
+                "student": student_id,
+                "course": course_id,
+                "type": "education",
+            }
+        )
+        
+        # Upload starter code
+        await self.client.files.upload(
+            container.id,
+            "/home/student/assignment.py",
+            starter_code.encode()
+        )
+        
+        return container
+    
+    async def grade_submission(self, container_id: str) -> AssignmentResult:
+        """Run tests and grade the submission."""
+        async with self.client.terminal.connect(container_id) as term:
+            await term.write(b"python -m pytest /home/student/\n")
+            
+            output = []
+            async for data in term:
+                output.append(data.decode())
+            
+            output_str = "".join(output)
+            passed = "passed" in output_str.lower()
+            
+            return AssignmentResult(
+                passed=passed,
+                output=output_str,
+                score=100 if passed else 0
+            )
+    
+    async def close(self):
+        await self.client.close()
+```
+
+### Pytest Integration
+
+```python
+import pytest
+import asyncio
+from rexec import RexecClient
+
+@pytest.fixture
+async def rexec_client():
+    """Provide a Rexec client for tests."""
+    async with RexecClient(
+        base_url=os.environ["REXEC_URL"],
+        token=os.environ["REXEC_TOKEN"]
+    ) as client:
+        yield client
+
+@pytest.fixture
+async def test_container(rexec_client):
+    """Provide a test container."""
+    container = await rexec_client.containers.create(
+        image="ubuntu:24.04",
+        labels={"test": "true"}
+    )
+    yield container
+    await rexec_client.containers.delete(container.id)
+
+@pytest.mark.asyncio
+async def test_file_operations(rexec_client, test_container):
+    # Write file
+    await rexec_client.files.upload(
+        test_container.id,
+        "/tmp/test.txt",
+        b"hello world"
+    )
+    
+    # Read file
+    content = await rexec_client.files.download(
+        test_container.id,
+        "/tmp/test.txt"
+    )
+    
+    assert content == b"hello world"
+```
+
+## API Reference
+
+### RexecClient
+
+```python
+class RexecClient:
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        timeout: float = 30.0
+    )
+    
+    async def close(self) -> None
+    
+    async def __aenter__(self) -> "RexecClient"
+    async def __aexit__(self, *args) -> None
+```
+
+### Types
+
+<ParamField path="Container" type="class">
+  Container instance.
+  
+  <ParamField path="id" type="str">Container ID</ParamField>
+  <ParamField path="name" type="str">Container name</ParamField>
+  <ParamField path="image" type="str">Docker image</ParamField>
+  <ParamField path="status" type="str">Current status</ParamField>
+  <ParamField path="created_at" type="datetime">Creation timestamp</ParamField>
+  <ParamField path="started_at" type="datetime | None">Start timestamp</ParamField>
+  <ParamField path="labels" type="dict[str, str]">Container labels</ParamField>
+  <ParamField path="environment" type="dict[str, str]">Environment variables</ParamField>
+</ParamField>
+
+<ParamField path="FileInfo" type="class">
+  File metadata.
+  
+  <ParamField path="name" type="str">File name</ParamField>
+  <ParamField path="path" type="str">Full path</ParamField>
+  <ParamField path="size" type="int">File size in bytes</ParamField>
+  <ParamField path="mode" type="str">File permissions</ParamField>
+  <ParamField path="mod_time" type="datetime">Last modification time</ParamField>
+  <ParamField path="is_dir" type="bool">Whether this is a directory</ParamField>
+</ParamField>
+
+### Services
+
+**ContainerService** - Access via `client.containers`
+- `async list() -> list[Container]` - List all containers
+- `async get(container_id: str) -> Container` - Get container by ID
+- `async create(**kwargs) -> Container` - Create a container
+- `async delete(container_id: str) -> None` - Delete a container
+- `async start(container_id: str) -> None` - Start a container
+- `async stop(container_id: str) -> None` - Stop a container
+
+**FileService** - Access via `client.files`
+- `async list(container_id: str, path: str) -> list[FileInfo]` - List files
+- `async download(container_id: str, path: str) -> bytes` - Download a file
+- `async upload(container_id: str, path: str, content: bytes) -> None` - Upload a file
+- `async mkdir(container_id: str, path: str) -> None` - Create directory
+- `async delete(container_id: str, path: str) -> None` - Delete a file
+
+**TerminalService** - Access via `client.terminal`
+- `async connect(container_id: str, **kwargs) -> Terminal` - Connect to terminal
+
+**Terminal** methods:
+- `async write(data: bytes) -> None` - Send data to terminal
+- `async read() -> bytes` - Read output from terminal
+- `async resize(cols: int, rows: int) -> None` - Resize terminal
+- `async close() -> None` - Close connection
+- Supports async iteration: `async for data in term:`
+
+## Best Practices
+
+<Note>
+**Use Context Managers** - Always use `async with` for automatic cleanup:
+```python
+async with RexecClient(base_url, token) as client:
+    # Client is automatically closed
+    pass
+```
+</Note>
+
+<Note>
+**Handle Exceptions** - Catch specific exceptions for better error handling:
+```python
+from rexec import RexecAPIError, RexecConnectionError
+```
+</Note>
+
+<Note>
+**Clean Up Resources** - Delete containers when done:
+```python
+try:
+    container = await client.containers.create(image="ubuntu:24.04")
+    # Use container
+finally:
+    await client.containers.delete(container.id)
+```
+</Note>
+
+<Note>
+**Type Hints** - Use type hints for better IDE support and type checking:
+```python
+from rexec import Container
+
+container: Container = await client.containers.create(image="ubuntu:24.04")
+```
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Rust SDK" icon="rust" href="/sdks/rust">
+    Explore the Rust SDK
+  </Card>
+  <Card title="Go SDK" icon="golang" href="/sdks/go">
+    Check out the Go SDK
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    View complete API documentation
+  </Card>
+  <Card title="Examples" icon="code" href="/examples">
+    Browse more code examples
+  </Card>
+</CardGroup>

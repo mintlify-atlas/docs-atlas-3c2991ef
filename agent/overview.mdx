@@ -1,0 +1,224 @@
+---
+title: Agent Overview
+description: Connect any server or local machine to Rexec as a terminal for secure remote access
+---
+
+The Rexec Agent allows you to connect any server or local machine to Rexec as a terminal. This enables remote terminal access through the Rexec dashboard without exposing SSH ports or managing complex network configurations.
+
+## How It Works
+
+The agent system provides secure, bidirectional communication between your machines and the Rexec platform:
+
+<Steps>
+  <Step title="Registration">
+    The agent registers with the Rexec API, providing system information (OS, architecture, shell).
+  </Step>
+  
+  <Step title="WebSocket Connection">
+    The agent establishes a persistent WebSocket connection to Rexec's agent endpoint. All communication is encrypted via WSS (WebSocket Secure).
+  </Step>
+  
+  <Step title="Shell Sessions">
+    When you connect to the terminal from the dashboard:
+    - Rexec sends a `shell_start` message
+    - The agent spawns a PTY with your configured shell
+    - Input/output is proxied through the WebSocket
+  </Step>
+  
+  <Step title="Automatic Reconnection">
+    If the connection drops, the agent automatically reconnects with exponential backoff (5s, 10s, 20s, 30s max).
+  </Step>
+</Steps>
+
+## Agent Components
+
+The agent system consists of two parts:
+
+### Standalone Agent Binary
+
+**rexec-agent** - A lightweight, standalone binary that runs on your server and maintains a persistent connection to Rexec.
+
+- **Size**: ~10MB compiled binary
+- **Runtime**: Go-based, single process
+- **Dependencies**: None (statically compiled)
+- **Platforms**: Linux, macOS (both amd64 and arm64)
+
+### Integrated CLI Commands
+
+**rexec agent** - Agent management commands integrated into the rexec-cli for unified workflows.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="No Inbound Ports" icon="shield">
+    The agent initiates outbound connections only. No firewall changes or inbound port exposure required.
+  </Card>
+  
+  <Card title="Secure by Default" icon="lock">
+    All communication encrypted via WSS. Token-based authentication with long-lived API tokens.
+  </Card>
+  
+  <Card title="Auto-Reconnect" icon="rotate">
+    Automatic reconnection with exponential backoff ensures your server stays connected.
+  </Card>
+  
+  <Card title="System Metrics" icon="chart-line">
+    Real-time CPU, memory, and disk usage reporting to the dashboard.
+  </Card>
+</CardGroup>
+
+## Architecture
+
+```mermaid
+graph LR
+    A[Your Server] -->|WSS Outbound| B[Rexec API]
+    B -->|WebSocket| C[Dashboard]
+    C -->|Terminal I/O| B
+    B -->|Terminal I/O| A
+```
+
+<Note>
+  The agent uses WebSocket protocol for real-time bidirectional communication. This allows instant terminal interaction with minimal latency.
+</Note>
+
+## WebSocket Protocol
+
+The agent communicates using a JSON-based message protocol:
+
+### Messages from Server
+
+| Message | Description |
+|---------|-------------|
+| `shell_start` | Start a new shell session |
+| `shell_input` | Send input to shell |
+| `shell_resize` | Resize terminal window |
+| `shell_stop` | Stop shell session |
+| `ping` | Keep-alive ping |
+| `exec` | Execute a command |
+
+### Messages from Agent
+
+| Message | Description |
+|---------|-------------|
+| `shell_started` | Shell session started |
+| `shell_output` | Shell output data |
+| `shell_stopped` | Shell session ended |
+| `shell_error` | Error message |
+| `pong` | Keep-alive response |
+| `exec_result` | Command execution result |
+| `system_info` | System information |
+| `stats` | Resource usage statistics |
+
+## Use Cases
+
+### Remote Server Management
+
+Connect production servers for quick debugging and maintenance:
+
+```bash
+rexec-agent register --name "prod-db-1" --tags "production,database,postgres"
+```
+
+### Development Environment
+
+Connect your local machine for remote access from anywhere:
+
+```bash
+rexec-agent register --name "macbook-dev" --description "Personal dev machine"
+```
+
+### CI/CD Runners
+
+Connect CI runners for debugging failed builds:
+
+```bash
+rexec-agent register --name "ci-runner-1" --tags "ci,github-actions"
+```
+
+### IoT/Edge Devices
+
+Connect Raspberry Pi or edge devices:
+
+```bash
+rexec-agent register --name "rpi-sensor-hub" --shell /bin/sh
+```
+
+## Comparison: Agent vs Container
+
+| Feature | Agent | Container |
+|---------|-------|----------|
+| Setup | Install on existing server | Provisioned by Rexec |
+| Resources | Uses host resources | Dedicated container |
+| Persistence | Full disk access | Ephemeral or volume-based |
+| Network | Host network | Isolated network |
+| Use Case | Existing servers | Development environments |
+
+<Warning>
+  **Token Security**: Store tokens securely; use environment variables in production. The agent provides full shell access to your configured shell with the permissions of the user running the agent.
+</Warning>
+
+## Security Considerations
+
+<AccordionGroup>
+  <Accordion title="Token Storage">
+    - Store tokens in environment variables or secure config files
+    - Use long-lived API tokens (starting with `rexec_`) instead of JWT tokens
+    - Never commit tokens to version control
+    - Rotate tokens periodically using `rexec-agent refresh-token`
+  </Accordion>
+  
+  <Accordion title="Shell Access">
+    The agent provides full shell access with the permissions of the user running it:
+    - Run the agent as a non-root user when possible
+    - Use the principle of least privilege
+    - Consider using a dedicated user for agent processes
+  </Accordion>
+  
+  <Accordion title="Network Security">
+    - All communication encrypted via WSS (WebSocket Secure)
+    - No inbound ports required; agent initiates outbound connection
+    - Compatible with corporate firewalls (uses standard HTTPS/WSS ports)
+  </Accordion>
+  
+  <Accordion title="Auto-Update">
+    The agent supports optional auto-updates:
+    - Opt-in via `auto_update: true` in config or `REXEC_AUTO_UPDATE=true`
+    - Downloads from official Rexec server
+    - Verifies binary version before replacing
+  </Accordion>
+</AccordionGroup>
+
+## System Requirements
+
+<Tabs>
+  <Tab title="Linux">
+    - **OS**: Any modern Linux distribution
+    - **Kernel**: 3.10+ (for PTY support)
+    - **Architecture**: amd64, arm64, armv7
+    - **Memory**: 10MB minimum
+    - **Disk**: 20MB for binary
+  </Tab>
+  
+  <Tab title="macOS">
+    - **OS**: macOS 10.13+
+    - **Architecture**: amd64 (Intel), arm64 (Apple Silicon)
+    - **Memory**: 10MB minimum
+    - **Disk**: 20MB for binary
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/agent/installation">
+    Install the agent on your server
+  </Card>
+  
+  <Card title="Configuration" icon="gear" href="/agent/configuration">
+    Configure agent settings and environment
+  </Card>
+  
+  <Card title="Troubleshooting" icon="wrench" href="/agent/troubleshooting">
+    Common issues and solutions
+  </Card>
+</CardGroup>

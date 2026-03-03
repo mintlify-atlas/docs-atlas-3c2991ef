@@ -1,0 +1,605 @@
+---
+title: Terminal Collaboration
+description: Share terminal sessions in real-time for pair programming, debugging, and teaching
+---
+
+## Overview
+
+Rexec Collaboration enables multiple users to access the same terminal session simultaneously. Share your terminal with teammates for pair programming, debugging production issues, or teaching - all through secure, shareable links.
+
+<Info>
+Collaboration sessions support both **view-only** and **full control** modes, giving you flexibility in how you share access.
+</Info>
+
+## How It Works
+
+When you start a collaboration session:
+
+1. **Owner** creates a session from their terminal
+2. **Rexec generates** a unique share code (e.g., `rexec-xyz123`)
+3. **Participants** join via shareable link: `/join/rexec-xyz123`
+4. **All users** see the same terminal output in real-time
+5. **WebSocket broadcast** distributes output to all participants
+
+<CardGroup cols={2}>
+  <Card title="Real-Time Sync" icon="bolt">
+    Terminal output broadcasts to all participants instantly
+  </Card>
+  <Card title="Participant Awareness" icon="users">
+    See who's connected with color-coded cursors
+  </Card>
+  <Card title="Access Control" icon="lock">
+    View-only or full control modes
+  </Card>
+  <Card title="Temporary Links" icon="clock">
+    Sessions expire automatically after set duration
+  </Card>
+</CardGroup>
+
+## Starting a Collaboration Session
+
+### From the Dashboard
+
+1. Open any running terminal (cloud container or agent)
+2. Click the **Share** button in the terminal header
+3. Configure session settings:
+   - **Mode**: View-only or Full control
+   - **Max users**: Limit concurrent participants (default: 5)
+   - **Duration**: Session lifetime in minutes (default: 60)
+4. Click **Create Share Link**
+5. Copy and share the generated link with participants
+
+### Via API
+
+```bash
+curl -X POST https://your-instance.com/api/collab/sessions \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "container_id": "abc123...",
+    "mode": "view",
+    "max_users": 10,
+    "duration_minutes": 120
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "share_code": "rexec-xyz123",
+  "share_url": "/join/rexec-xyz123",
+  "expires_at": "2024-03-15T18:30:00Z",
+  "mode": "view"
+}
+```
+
+<CodeGroup>
+```go Go SDK
+session, err := client.Collab.CreateSession(ctx, &rexec.CollabSessionRequest{
+    ContainerID:     containerID,
+    Mode:            rexec.CollabModeView,
+    MaxUsers:        5,
+    DurationMinutes: 60,
+})
+
+fmt.Printf("Share URL: %s\n", session.ShareURL)
+```
+
+```typescript TypeScript SDK
+const session = await client.collab.createSession({
+  container_id: containerId,
+  mode: 'control',
+  max_users: 3,
+  duration_minutes: 30
+});
+
+console.log('Share code:', session.share_code);
+```
+
+```python Python SDK
+session = await client.collab.create_session(
+    container_id=container_id,
+    mode="view",
+    max_users=10,
+    duration_minutes=120
+)
+
+print(f"Join at: {session.share_url}")
+```
+</CodeGroup>
+
+## Session Modes
+
+### View-Only Mode
+
+Participants can:
+- ✅ See all terminal output in real-time
+- ✅ Scroll through history
+- ✅ Copy text from terminal
+- ❌ Send input or run commands
+
+**Use cases:**
+- Demonstrations and teaching
+- Debugging sessions (watchers)
+- Security-sensitive environments
+- Screen sharing alternative
+
+### Full Control Mode
+
+Participants can:
+- ✅ See all terminal output
+- ✅ Send input and run commands
+- ✅ Resize terminal window
+- ✅ Full interactive access
+
+**Use cases:**
+- Pair programming
+- Collaborative debugging
+- Live coding sessions
+- Interactive training
+
+<Warning>
+In full control mode, **any participant can execute commands**. Only share with trusted users.
+</Warning>
+
+## Architecture
+
+From `internal/api/handlers/collab.go:74`:
+
+### Shared Terminal Session
+
+Collaboration uses a shared session model where:
+
+```go
+type SharedTerminalSession struct {
+    ContainerID  string
+    ExecID       string
+    OwnerID      string
+    Connections  map[string]*websocket.Conn  // userID -> connection
+    InputChan    chan []byte  // Shared input channel
+    OutputChan   chan []byte  // Broadcast output channel
+}
+```
+
+**Key behaviors:**
+1. **Single PTY**: All participants share one pseudo-terminal
+2. **Broadcast output**: Output written once, distributed to all connections
+3. **Input merging**: In control mode, input from any participant is sent to PTY
+4. **Resize sync**: Terminal resizes affect all participants
+
+### Message Broadcasting
+
+From `internal/api/handlers/collab.go:193`:
+
+```go
+func (s *CollabSession) broadcastLoop() {
+    for msg := range s.broadcast {
+        s.mu.RLock()
+        for _, participant := range s.Participants {
+            if participant.Conn != nil {
+                participant.Conn.WriteJSON(msg)
+            }
+        }
+        s.mu.RUnlock()
+    }
+}
+```
+
+Messages are queued and broadcast asynchronously to prevent slow clients from blocking others.
+
+## Participant Management
+
+### Participant Roles
+
+From `internal/api/handlers/collab.go:44`:
+
+```go
+type CollabParticipant struct {
+    ID       string
+    UserID   string
+    Username string
+    Role     string  // "owner", "editor", "viewer"
+    Color    string  // Cursor color (e.g., "#3b82f6")
+}
+```
+
+| Role | Can View | Can Control | Can Kick |
+|------|----------|-------------|----------|
+| Owner | ✅ | ✅ | ✅ |
+| Editor | ✅ | ✅ | ❌ |
+| Viewer | ✅ | ❌ | ❌ |
+
+### Joining a Session
+
+Participants join by:
+
+1. Navigating to the share URL: `https://rexec.example.com/join/rexec-xyz123`
+2. Authenticating (if required by owner settings)
+3. Connecting via WebSocket with share code
+
+From `internal/api/handlers/collab.go:80`:
+
+```go
+func (h *CollabHandler) StartSession(c *gin.Context) {
+    // Verify ownership
+    container, ok := h.containerManager.GetContainer(req.ContainerID)
+    if !ok || container.UserID != userID.(string) {
+        c.JSON(http.StatusForbidden, gin.H{"error": "not authorized"})
+        return
+    }
+    
+    // Generate unique share code
+    shareCode := generateShareCode()  // e.g., "rexec-xyz123"
+}
+```
+
+### Kicking Participants
+
+Owners can remove participants:
+
+```bash
+curl -X DELETE https://your-instance.com/api/collab/sessions/{session_id}/participants/{user_id} \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Collaboration Protocol
+
+### WebSocket Messages
+
+From `internal/api/handlers/collab.go:54`:
+
+```typescript
+interface CollabMessage {
+  type: 'join' | 'leave' | 'cursor' | 'selection' | 'input' | 'output' | 'sync' | 'participants';
+  user_id?: string;
+  username?: string;
+  role?: string;
+  color?: string;
+  data?: any;
+  timestamp: number;
+}
+```
+
+### Message Flow
+
+<Tabs>
+  <Tab title="Join">
+    When a participant joins:
+    
+    ```json
+    {
+      "type": "join",
+      "user_id": "user-456",
+      "username": "alice",
+      "role": "viewer",
+      "color": "#3b82f6",
+      "timestamp": 1710518400000
+    }
+    ```
+    
+    Broadcast to all existing participants.
+  </Tab>
+  
+  <Tab title="Output">
+    Terminal output broadcast:
+    
+    ```json
+    {
+      "type": "output",
+      "data": "Hello, World!\n",
+      "timestamp": 1710518401000
+    }
+    ```
+    
+    Sent to all participants in real-time.
+  </Tab>
+  
+  <Tab title="Input">
+    In control mode, input from any participant:
+    
+    ```json
+    {
+      "type": "input",
+      "user_id": "user-456",
+      "data": "ls -la\n",
+      "timestamp": 1710518402000
+    }
+    ```
+    
+    Forwarded to PTY, output broadcast to all.
+  </Tab>
+  
+  <Tab title="Participants">
+    Periodic sync of active participants:
+    
+    ```json
+    {
+      "type": "participants",
+      "data": [
+        {"user_id": "user-123", "username": "bob", "role": "owner"},
+        {"user_id": "user-456", "username": "alice", "role": "viewer"}
+      ],
+      "timestamp": 1710518403000
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Session Lifecycle
+
+From `internal/api/handlers/collab.go:148`:
+
+### Creation
+
+```go
+session := &CollabSession{
+    ID:           uuid.New().String(),
+    ContainerID:  req.ContainerID,
+    OwnerID:      userID.(string),
+    ShareCode:    shareCode,
+    ExpiresAt:    time.Now().Add(time.Duration(req.Duration) * time.Minute),
+    Participants: make(map[string]*CollabParticipant),
+    broadcast:    make(chan CollabMessage, 1024),
+}
+```
+
+### Automatic Cleanup
+
+From `internal/api/handlers/collab.go:74`:
+
+```go
+func (h *CollabHandler) cleanupLoop() {
+    ticker := time.NewTicker(5 * time.Minute)
+    for range ticker.C {
+        h.mu.Lock()
+        for code, session := range h.sessions {
+            if time.Now().After(session.ExpiresAt) {
+                close(session.broadcast)
+                delete(h.sessions, code)
+                h.store.DeleteCollabSession(ctx, session.ID)
+            }
+        }
+        h.mu.Unlock()
+    }
+}
+```
+
+Expired sessions are cleaned up every 5 minutes.
+
+## Use Cases
+
+<Tabs>
+  <Tab title="Pair Programming">
+    **Scenario**: Two developers working on a bug fix
+    
+    ```bash
+    # Developer A (owner) shares terminal
+    rexec collab create --mode control --max-users 2
+    # Share code: rexec-abc123
+    
+    # Developer B joins
+    # Navigate to https://rexec.example.com/join/rexec-abc123
+    
+    # Both can edit files, run tests, debug together
+    vim bug-fix.go
+    go test -v
+    ```
+    
+    **Benefits**:
+    - Real-time collaboration
+    - No screen sharing lag
+    - Both can type simultaneously
+  </Tab>
+  
+  <Tab title="Production Debugging">
+    **Scenario**: Incident response with multiple engineers
+    
+    ```bash
+    # SRE creates view-only session
+    rexec collab create --mode view --max-users 10 --duration 180
+    
+    # Share link in Slack incident channel
+    # Engineers watch as SRE investigates
+    
+    tail -f /var/log/app.log
+    docker ps | grep failing-service
+    kubectl logs pod-xyz
+    ```
+    
+    **Benefits**:
+    - Multiple observers without interference
+    - Full visibility for incident response
+    - Automatic audit trail
+  </Tab>
+  
+  <Tab title="Teaching & Training">
+    **Scenario**: Live coding tutorial
+    
+    ```bash
+    # Instructor shares terminal
+    rexec collab create --mode view --max-users 50
+    
+    # Students watch instructor's workflow
+    # Step-by-step demonstration
+    
+    mkdir project && cd project
+    npm init -y
+    npm install express
+    vim server.js
+    ```
+    
+    **Benefits**:
+    - Scales to many viewers
+    - Better than screen recording
+    - Students can copy commands
+  </Tab>
+  
+  <Tab title="Remote Support">
+    **Scenario**: Helping a colleague troubleshoot
+    
+    ```bash
+    # Colleague (owner) creates control session
+    rexec collab create --mode control --duration 30
+    
+    # Support engineer joins and takes over
+    # Debug together, fix issue
+    
+    systemctl status failing-service
+    journalctl -u failing-service --since "10 minutes ago"
+    ```
+    
+    **Benefits**:
+    - No need for SSH keys
+    - Easy to grant temporary access
+    - Sessions auto-expire
+  </Tab>
+</Tabs>
+
+## Security & Access Control
+
+### Agent Terminal Support
+
+From `internal/api/handlers/collab.go:98`:
+
+```go
+if strings.HasPrefix(req.ContainerID, "agent:") {
+    // Verify agent ownership
+    agentID := strings.TrimPrefix(req.ContainerID, "agent:")
+    agent, err := h.store.GetAgent(ctx, agentID)
+    if err != nil || agent == nil || agent.UserID != userID {
+        return http.StatusForbidden, "not authorized"
+    }
+}
+```
+
+Collaboration works with both cloud containers and agent terminals.
+
+### Access Verification
+
+From `internal/api/handlers/terminal.go:144`:
+
+```go
+func (h *TerminalHandler) HasCollabAccess(ctx context.Context, userID, containerID string) bool {
+    // Check in-memory sessions first
+    h.collabHandler.mu.RLock()
+    for _, session := range h.collabHandler.sessions {
+        if session.ContainerID == containerID {
+            if _, hasAccess := session.Participants[userID]; hasAccess {
+                return true
+            }
+        }
+    }
+    h.collabHandler.mu.RUnlock()
+    
+    // Fallback to database
+    session, _ := h.collabHandler.store.GetCollabSessionByContainerID(ctx, containerID)
+    // Check if user is participant
+}
+```
+
+Access control is enforced at WebSocket connection time.
+
+### Best Practices
+
+<Card title="Use View-Only for Demos" icon="eye">
+  Default to view-only mode unless participants need to interact.
+</Card>
+
+<Card title="Limit Session Duration" icon="clock">
+  Set reasonable expiration times (30-60 minutes) to prevent stale sessions.
+</Card>
+
+<Card title="Restrict Max Users" icon="users">
+  Limit participants to prevent resource exhaustion from too many connections.
+</Card>
+
+<Card title="Monitor Active Sessions" icon="chart-line">
+  Regularly review and clean up forgotten sessions in your dashboard.
+</Card>
+
+## Troubleshooting
+
+### Participant Can't Join
+
+1. **Session expired**: Check expiration time in dashboard
+2. **Max users reached**: Owner can increase limit or kick inactive users
+3. **Container stopped**: Ensure terminal is still running
+4. **Invalid share code**: Verify code wasn't mistyped
+
+### Output Not Syncing
+
+1. **WebSocket disconnected**: Check browser console for errors
+2. **Network issues**: Test connectivity to Rexec server
+3. **Session closed**: Owner may have ended session
+
+### Performance Issues
+
+With many participants:
+
+1. **Reduce output**: Avoid commands with heavy output (`cat` large files)
+2. **Limit participants**: Set reasonable max_users
+3. **Use compression**: WebSocket compression enabled by default
+
+## API Reference
+
+### Create Session
+
+```http
+POST /api/collab/sessions
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "container_id": "abc123...",
+  "mode": "view",
+  "max_users": 5,
+  "duration_minutes": 60
+}
+```
+
+### Get Session
+
+```http
+GET /api/collab/sessions/{session_id}
+Authorization: Bearer <token>
+```
+
+### End Session
+
+```http
+DELETE /api/collab/sessions/{session_id}
+Authorization: Bearer <token>
+```
+
+### List Participants
+
+```http
+GET /api/collab/sessions/{session_id}/participants
+Authorization: Bearer <token>
+```
+
+### Remove Participant
+
+```http
+DELETE /api/collab/sessions/{session_id}/participants/{user_id}
+Authorization: Bearer <token>
+```
+
+## Related Features
+
+<CardGroup cols={2}>
+  <Card title="Cloud Terminals" icon="cloud" href="/features/cloud-terminals">
+    Create on-demand terminals to share
+  </Card>
+  <Card title="BYOS Agents" icon="server" href="/features/agents">
+    Share agent terminals with your team
+  </Card>
+  <Card title="Session Recording" icon="circle-dot" href="/features/session-recording">
+    Record collaborative sessions for review
+  </Card>
+  <Card title="Security" icon="lock" href="/features/security">
+    Add MFA protection to sensitive terminals
+  </Card>
+</CardGroup>

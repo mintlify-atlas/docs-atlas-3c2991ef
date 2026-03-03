@@ -1,0 +1,537 @@
+---
+title: Terminal UI (rexec-tui)
+description: Interactive terminal dashboard built with Bubble Tea for managing Rexec terminals, snippets, and agents
+---
+
+The **rexec-tui** is a beautiful, interactive terminal user interface for managing your Rexec environments. Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea), it provides a native-feeling terminal experience with real-time updates and keyboard-driven navigation.
+
+## Overview
+
+The TUI provides a full-featured dashboard directly in your terminal, allowing you to:
+
+- View and manage all terminals and agents
+- Browse and run code snippets
+- Create new terminals
+- Connect to running containers
+- Handle MFA-protected terminals
+- Monitor terminal status in real-time
+
+<Note>
+  The TUI is perfect for users who prefer keyboard-driven workflows and want instant access to their Rexec environment without opening a browser.
+</Note>
+
+## Installation
+
+<Steps>
+  <Step title="Build from Source">
+    Clone the Rexec repository and build the TUI:
+
+    ```bash
+    git clone https://github.com/PipeOpsHQ/rexec.git
+    cd rexec
+    make tui
+    ```
+
+    The binary will be created at `bin/rexec-tui`.
+  </Step>
+
+  <Step title="Install to PATH">
+    Move the binary to your system path:
+
+    ```bash
+    sudo mv bin/rexec-tui /usr/local/bin/
+    chmod +x /usr/local/bin/rexec-tui
+    ```
+  </Step>
+
+  <Step title="Launch the TUI">
+    Run the TUI from anywhere:
+
+    ```bash
+    rexec-tui
+    ```
+  </Step>
+</Steps>
+
+### Build for All Platforms
+
+To build cross-platform binaries:
+
+```bash
+make tui-all-platforms
+```
+
+This creates binaries in `downloads/` for:
+- `rexec-tui-linux-amd64`
+- `rexec-tui-linux-arm64`
+- `rexec-tui-darwin-amd64`
+- `rexec-tui-darwin-arm64`
+
+## Configuration
+
+The TUI uses the same configuration as the CLI, stored at `~/.rexec/config.json`.
+
+### Configuration File
+
+```json
+{
+  "host": "https://rexec.pipeops.io",
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "username": "alice",
+  "email": "alice@example.com",
+  "tier": "pro"
+}
+```
+
+### Environment Variables
+
+Override configuration with environment variables:
+
+| Variable | Description | Example |
+|----------|-------------|----------|
+| `REXEC_HOST` | API server URL | `https://rexec.pipeops.io` |
+| `REXEC_TOKEN` | Authentication token | `eyJhbGci...` |
+
+<CodeGroup>
+```bash Environment Override
+# Set custom host
+export REXEC_HOST="https://rexec.company.com"
+export REXEC_TOKEN="your-jwt-token"
+
+rexec-tui
+```
+
+```bash One-time Override
+REXEC_HOST="https://staging.rexec.io" rexec-tui
+```
+</CodeGroup>
+
+## Authentication
+
+Before using the TUI, authenticate with the CLI:
+
+```bash
+# Interactive browser login
+rexec login
+
+# Or with token
+rexec login --token eyJhbGci...
+```
+
+The TUI will read credentials from `~/.rexec/config.json`.
+
+<Warning>
+  If you're not logged in, the TUI will display an error: **"Not logged in. Run 'rexec login' first."**
+</Warning>
+
+## User Interface
+
+### Dashboard View
+
+The main dashboard shows:
+
+```
+  ██████╗ ███████╗██╗  ██╗███████╗ ██████╗
+  ██╔══██╗██╔════╝╚██╗██╔╝██╔════╝██╔════╝
+  ██████╔╝█████╗   ╚███╔╝ █████╗  ██║
+  ██╔══██╗██╔══╝   ██╔██╗ ██╔══╝  ██║
+  ██║  ██║███████╗██╔╝ ██╗███████╗╚██████╗
+  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝ ╚═════╝
+
+  alice@example.com • pro
+
+  Total     Running   Stopped   Snippets
+    12        8         4         25
+
+  Recent Terminals
+
+  ● 1. dev-ubuntu-1         ubuntu:22.04      [abc12345]
+  ● 2. prod-api             alpine:latest     [def67890]
+  ○ 3. staging-db           postgres:14       [ghi11121]
+  ● 4. testing-env          debian:bookworm   [jkl31415]
+  ● 5. agent:my-laptop      agent             [mno16171]
+
+  ... and 7 more (press 't' to see all)
+
+  1-9 connect  •  t terminals  •  s snippets  •  c create  •  r refresh  •  q quit
+```
+
+<Info>
+  The dashboard provides an at-a-glance view of your environment with color-coded status indicators.
+</Info>
+
+### Terminals List
+
+Press **t** to view the full terminals list with filtering:
+
+- **↑/↓** or **j/k** - Navigate
+- **/** - Filter by name
+- **Enter** - Connect to terminal
+- **Esc** - Back to dashboard
+
+### Snippets View
+
+Press **s** to browse saved snippets:
+
+```
+  Snippets
+
+  docker-install       Install Docker Engine
+  setup-node           Node.js 20 LTS setup
+  update-system        System update & upgrade
+  ssl-cert-gen         Generate self-signed SSL cert
+```
+
+### MFA Prompt
+
+When connecting to MFA-protected terminals:
+
+```
+  🔒 MFA Required
+
+  This terminal is protected with MFA.
+  Enter your 6-digit authenticator code:
+
+  1 2 3 4 5 6
+
+  Press Enter to verify • Esc to cancel
+```
+
+## Keyboard Shortcuts
+
+### Dashboard
+
+| Key | Action |
+|-----|--------|
+| **1-9** | Quick connect to terminal (by number) |
+| **t** | View all terminals |
+| **s** | View snippets |
+| **c** | Create new terminal |
+| **r** | Refresh data |
+| **q** | Quit |
+| **Ctrl+C** | Quit |
+
+### Terminals List
+
+| Key | Action |
+|-----|--------|
+| **↑/↓** | Navigate up/down |
+| **j/k** | Vim-style navigation |
+| **/** | Filter terminals |
+| **Enter** | Connect to selected terminal |
+| **Esc** | Back to dashboard |
+| **q** | Quit to dashboard |
+
+### MFA Input
+
+| Key | Action |
+|-----|--------|
+| **0-9** | Enter digit |
+| **Backspace** | Delete last digit |
+| **Enter** | Verify code |
+| **Esc** | Cancel |
+
+## Features
+
+### Real-time Status
+
+The TUI shows live status with color indicators:
+
+- **● Green** - Running
+- **○ Yellow** - Stopped
+- **○ Red** - Error
+
+### Quick Connect
+
+Connect to terminals by number directly from the dashboard:
+
+```bash
+# Press '1' to connect to first terminal
+# Press '2' to connect to second terminal
+# etc.
+```
+
+This launches `rexec connect <container-id>` in a new shell.
+
+### Terminal Creation
+
+Press **c** to create a new terminal with default settings:
+
+- **Name**: `terminal-<timestamp>`
+- **Image**: `ubuntu`
+- **Role**: `default`
+
+<Note>
+  For advanced options (custom images, memory, CPU), use the CLI: `rexec create --name mydev --image alpine --memory 1gb --cpu 1`
+</Note>
+
+### MFA Support
+
+When a terminal has MFA enabled (indicated by 🔒):
+
+1. Select the terminal
+2. Enter your 6-digit authenticator code
+3. Press **Enter** to verify
+4. On success, connects to the terminal
+
+### Agent Terminals
+
+Agent-connected machines appear in the list with `agent:` prefix:
+
+```
+● 5. my-laptop          agent      [agent:abc123]
+```
+
+Connect to agents the same way as containers.
+
+## Styling & Themes
+
+The TUI uses Lipgloss for styling with a carefully designed color palette:
+
+```go
+// cmd/rexec-tui/main.go:33
+primaryColor   = "#00D4FF"  // Cyan accents
+secondaryColor = "#7C3AED"  // Purple highlights
+successColor   = "#10B981"  // Green for running
+warningColor   = "#F59E0B"  // Yellow for stopped
+errorColor     = "#EF4444"  // Red for errors
+dimColor       = "#6B7280"  // Gray for secondary text
+bgColor        = "#0F172A"  // Dark background
+cardBgColor    = "#1E293B"  // Card background
+```
+
+## API Integration
+
+The TUI communicates with the Rexec API:
+
+### Endpoints Used
+
+| Endpoint | Purpose |
+|----------|----------|
+| `GET /api/containers` | Fetch terminals and agents |
+| `GET /api/snippets` | Fetch user snippets |
+| `POST /api/containers` | Create new terminal |
+| `POST /api/security/terminal/:id/mfa-verify` | Verify MFA code |
+
+### Response Handling
+
+The TUI handles both wrapped and legacy API responses:
+
+```go
+// Wrapped response (current API)
+{
+  "containers": [
+    { "id": "abc", "name": "dev", ... }
+  ]
+}
+
+// Legacy response (older versions)
+[
+  { "id": "abc", "name": "dev", ... }
+]
+```
+
+## Troubleshooting
+
+### "Not logged in" Error
+
+**Solution**: Authenticate first:
+
+```bash
+rexec login
+```
+
+### TUI Not Found
+
+**Solution**: Add to PATH or use full path:
+
+```bash
+# Option 1: Add to PATH
+sudo mv bin/rexec-tui /usr/local/bin/
+
+# Option 2: Use full path
+./bin/rexec-tui
+```
+
+### Connection Errors
+
+**Check host configuration**:
+
+```bash
+cat ~/.rexec/config.json
+```
+
+Ensure `host` points to the correct API server.
+
+### Display Issues
+
+Ensure your terminal supports:
+- True color (24-bit)
+- UTF-8 encoding
+- Minimum 80x24 size
+
+**Test terminal capabilities**:
+
+```bash
+echo $TERM
+# Should show: xterm-256color, screen-256color, or similar
+```
+
+### Slow Performance
+
+**Reduce API calls** by avoiding frequent refreshes. The TUI auto-loads data on startup.
+
+## Advanced Usage
+
+### Custom API Host
+
+Point the TUI to a self-hosted Rexec instance:
+
+```bash
+export REXEC_HOST="https://rexec.company.internal"
+rexec-tui
+```
+
+### Running in Screen/Tmux
+
+The TUI works seamlessly in multiplexers:
+
+```bash
+# In tmux
+tmux new-session -s rexec
+rexec-tui
+
+# In screen
+screen -S rexec
+rexec-tui
+```
+
+### SSH Over Jump Host
+
+Access the TUI on a remote server:
+
+```bash
+ssh user@jumphost
+rexec-tui
+```
+
+## Source Code
+
+The TUI is implemented in a single file with clear separation:
+
+- **main.go** - Entry point, model initialization
+- **Styles** - Lipgloss color definitions (lines 32-85)
+- **Models** - Container, Snippet structs (lines 88-130)
+- **Views** - Dashboard, terminals, MFA prompt (lines 368-575)
+- **Commands** - API interactions, terminal connection (lines 577-663)
+
+**File**: `cmd/rexec-tui/main.go` (823 lines)
+
+<CardGroup cols={2}>
+  <Card title="View Source" icon="code" href="https://github.com/PipeOpsHQ/rexec/blob/main/cmd/rexec-tui/main.go">
+    Browse the TUI source code on GitHub
+  </Card>
+  <Card title="Bubble Tea Docs" icon="book" href="https://github.com/charmbracelet/bubbletea">
+    Learn about the Bubble Tea framework
+  </Card>
+</CardGroup>
+
+## Integration with CLI
+
+The TUI can be launched from the CLI:
+
+```bash
+# Launch TUI dashboard
+rexec -i
+rexec tui
+rexec dashboard
+```
+
+All three commands attempt to find and launch `rexec-tui`.
+
+## Build Configuration
+
+From the Makefile:
+
+```makefile
+# Build TUI for local platform
+tui:
+	@echo "Building $(TUI_NAME)..."
+	$(GOBUILD) -ldflags "-X main.Version=$(VERSION)" -o bin/$(TUI_NAME) ./cmd/rexec-tui
+
+# Build for all platforms
+tui-all-platforms: downloads-dir
+	@echo "Building TUI for all platforms..."
+	@for platform in $(PLATFORMS); do \
+		os=$$(echo $$platform | cut -d- -f1); \
+		arch=$$(echo $$platform | cut -d- -f2); \
+		echo "  Building rexec-tui-$$platform..."; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GOBUILD) -ldflags "-X main.Version=$(VERSION) -s -w" \
+			-o $(DOWNLOADS_DIR)/rexec-tui-$$platform ./cmd/rexec-tui; \
+	done
+```
+
+## Examples
+
+### Daily Workflow
+
+<Steps>
+  <Step title="Launch TUI">
+    ```bash
+    rexec-tui
+    ```
+  </Step>
+
+  <Step title="View Terminals">
+    Press **t** to see all terminals, use **/** to filter by name
+  </Step>
+
+  <Step title="Connect">
+    Press **Enter** on a terminal to connect, or press **1-9** from dashboard
+  </Step>
+
+  <Step title="Create New">
+    Press **c** to quickly spin up a new terminal
+  </Step>
+</Steps>
+
+### Running Snippets
+
+1. Press **s** to view snippets
+2. Note the snippet name
+3. Press **Esc** to return to dashboard
+4. Use CLI to run: `rexec run <snippet-name> --terminal <id>`
+
+<Note>
+  Direct snippet execution from the TUI is planned for a future release.
+</Note>
+
+## Comparison: TUI vs Web UI
+
+| Feature | TUI | Web UI |
+|---------|-----|--------|
+| **Launch Speed** | Instant | Requires browser |
+| **Resource Usage** | Minimal | Moderate |
+| **Keyboard-driven** | Yes | Partial |
+| **Real-time Updates** | Manual refresh | WebSocket live |
+| **Terminal Access** | Via `rexec connect` | Embedded xterm.js |
+| **Snippet Execution** | CLI integration | One-click |
+| **MFA Support** | Yes | Yes |
+| **Best For** | CLI power users | Visual workflows |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CLI Reference" icon="terminal" href="/tools/cli">
+    Explore the rexec-cli tool
+  </Card>
+  <Card title="SSH Gateway" icon="network-wired" href="/tools/ssh-gateway">
+    Access Rexec via SSH
+  </Card>
+  <Card title="Agent Setup" icon="server" href="/agent/overview">
+    Connect your own machines
+  </Card>
+  <Card title="Snippets" icon="code" href="/features/snippets">
+    Learn about code snippets
+  </Card>
+</CardGroup>

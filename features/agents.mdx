@@ -1,0 +1,564 @@
+---
+title: BYOS Agents
+description: Connect your own servers, laptops, or remote machines to Rexec without VPNs or exposed ports
+---
+
+## Overview
+
+Rexec Agents enable **Bring Your Own Server (BYOS)** functionality - connect any Linux, macOS, or BSD machine to your Rexec dashboard and access it through your browser. No SSH port forwarding, no VPN configuration, no firewall changes required.
+
+<Info>
+Agents establish secure **outbound** WebSocket connections to your Rexec server. This means they work behind NAT, corporate firewalls, and restrictive networks.
+</Info>
+
+## How It Works
+
+1. **Registration**: Agent registers with Rexec API, providing system info (OS, arch, shell)
+2. **Connection**: Agent establishes persistent WebSocket connection to `wss://your-instance.com/ws/agent/{agent_id}`
+3. **Shell Sessions**: When you connect from the dashboard:
+   - Rexec sends a `shell_start` message
+   - Agent spawns a PTY with your configured shell
+   - I/O is proxied through the WebSocket
+4. **Reconnection**: If disconnected, agent reconnects automatically with exponential backoff
+
+<CardGroup cols={2}>
+  <Card title="No Inbound Ports" icon="door-closed">
+    Agent initiates outbound connection - works behind NAT
+  </Card>
+  <Card title="Encrypted Transport" icon="lock">
+    All communication over WSS (WebSocket Secure)
+  </Card>
+  <Card title="Auto-Reconnect" icon="arrows-rotate">
+    Handles network interruptions gracefully
+  </Card>
+  <Card title="Cross-Platform" icon="laptop">
+    Works on Linux, macOS, BSD, Raspberry Pi, and more
+  </Card>
+</CardGroup>
+
+## Quick Start
+
+### Installation
+
+<Tabs>
+  <Tab title="Dashboard (Easiest)">
+    The fastest way to set up an agent:
+    
+    1. Go to **Settings → Agents** in your Rexec dashboard
+    2. Click **Add Agent**
+    3. Copy the generated installation command
+    4. Run it on your target machine:
+    
+    ```bash
+    curl -sSL https://rexec.pipeops.io/install-agent.sh | bash -s -- \
+      --token YOUR_TOKEN \
+      --name "prod-server-1"
+    ```
+    
+    The script automatically downloads, registers, and starts the agent.
+  </Tab>
+  
+  <Tab title="Manual Install">
+    Download and install the agent binary:
+    
+    ```bash
+    # Download latest release
+    wget https://github.com/rexec/rexec/releases/latest/download/rexec-agent-linux-amd64 \
+      -O /usr/local/bin/rexec-agent
+    chmod +x /usr/local/bin/rexec-agent
+    
+    # Register with your Rexec instance
+    export REXEC_TOKEN="your-api-token"
+    rexec-agent register --name "my-server"
+    
+    # Start the agent
+    rexec-agent start --daemon
+    ```
+  </Tab>
+  
+  <Tab title="System Service">
+    Install as a systemd service for automatic startup:
+    
+    ```bash
+    # Install agent binary first (see Manual Install)
+    
+    # Register the agent
+    rexec-agent register --name "prod-server" --token "$REXEC_TOKEN"
+    
+    # Install systemd service
+    sudo rexec-agent install
+    
+    # Service is now managed by systemd
+    sudo systemctl status rexec-agent
+    sudo systemctl enable rexec-agent
+    ```
+  </Tab>
+</Tabs>
+
+## Agent Commands
+
+### register
+
+Register this machine as a Rexec terminal.
+
+```bash
+rexec-agent register [options]
+```
+
+**Options:**
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|----------|
+| `--name` | `-n` | Terminal name | hostname |
+| `--description` | `-d` | Server description | - |
+| `--shell` | `-s` | Shell path | `$SHELL` or `/bin/bash` |
+| `--tags` | `-t` | Comma-separated tags | - |
+| `--token` | | Auth token | `$REXEC_TOKEN` |
+| `--host` | | API host URL | `https://rexec.pipeops.io` |
+
+<CodeGroup>
+```bash Interactive
+# Prompts for token and details
+rexec-agent register --name "my-server"
+```
+
+```bash Full Configuration
+rexec-agent register \
+  --name "prod-api-1" \
+  --description "Production API server" \
+  --shell /bin/zsh \
+  --tags "production,api,aws" \
+  --token "rexec_..."
+```
+
+```bash Environment Variable
+export REXEC_TOKEN="rexec_..."
+rexec-agent register --name "staging-server"
+```
+</CodeGroup>
+
+### start
+
+Start the agent and connect to Rexec.
+
+```bash
+rexec-agent start [--daemon|-d]
+```
+
+<Tabs>
+  <Tab title="Foreground">
+    Run in foreground for testing/debugging:
+    
+    ```bash
+    rexec-agent start
+    # Output:
+    # [Agent] Connecting to https://rexec.pipeops.io
+    # [Agent] Connected successfully (ID: abc123-def456)
+    # [Agent] Ready to receive shell sessions
+    ```
+  </Tab>
+  
+  <Tab title="Background">
+    Run as background daemon:
+    
+    ```bash
+    rexec-agent start --daemon
+    # Agent started in background (PID: 12345)
+    ```
+  </Tab>
+</Tabs>
+
+### status
+
+Show agent status and configuration.
+
+```bash
+rexec-agent status
+```
+
+**Output:**
+
+```
+Agent Status
+─────────────────────────────────────────
+  Registered: ✓
+  ID:         abc123-def456-...
+  Name:       prod-server-1
+  Host:       https://rexec.pipeops.io
+  Shell:      /bin/bash
+  Running:    ✓ Yes
+  Uptime:     2h 34m
+  Last Ping:  2 seconds ago
+```
+
+### stop / unregister / install
+
+```bash
+# Stop running agent
+rexec-agent stop
+
+# Remove from Rexec
+rexec-agent unregister
+
+# Install as systemd service (Linux only)
+sudo rexec-agent install
+```
+
+## Configuration
+
+### Configuration Files
+
+Agent loads config from:
+
+- `/etc/rexec/agent.yaml` (system-wide)
+- `~/.rexec/agent.json` (user-specific)
+
+Override with `--config` flag or `REXEC_CONFIG` environment variable.
+
+**Example (`/etc/rexec/agent.yaml`):**
+
+```yaml
+api_url: https://rexec.pipeops.io
+token: rexec_...
+agent_id: abc123-def456-...
+name: prod-server-1
+labels:
+  - production
+  - aws
+  - us-east-1
+shell: /bin/bash
+working_dir: /root
+reconnect_interval: 5s
+max_reconnect_interval: 5m
+```
+
+### Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|----------|
+| `REXEC_TOKEN` | Authentication token | `rexec_abc123...` |
+| `REXEC_HOST` | API host URL | `https://rexec.pipeops.io` |
+| `REXEC_API` | Alias for `REXEC_HOST` | Same as above |
+| `REXEC_CONFIG` | Custom config file path | `/opt/rexec/config.yaml` |
+
+<Info>
+Environment variables override config file settings.
+</Info>
+
+## WebSocket Protocol
+
+Agents use a message-based protocol over WebSocket:
+
+### Connection Handshake
+
+```
+WSS /ws/agent/{agent_id}?token={token}
+
+Headers:
+  X-Agent-Name: server-name
+  X-Agent-OS: linux
+  X-Agent-Arch: amd64
+  X-Agent-Shell: /bin/bash
+```
+
+### Message Types
+
+**Server → Agent:**
+
+| Message | Purpose |
+|---------|----------|
+| `shell_start` | Start a new shell session |
+| `shell_input` | Send input to active shell |
+| `shell_resize` | Resize terminal dimensions |
+| `shell_stop` | Stop shell session |
+| `ping` | Keep-alive heartbeat |
+| `exec` | Execute a single command |
+
+**Agent → Server:**
+
+| Message | Purpose |
+|---------|----------|
+| `shell_started` | Shell session ready |
+| `shell_output` | Shell output data |
+| `shell_stopped` | Shell session ended |
+| `shell_error` | Error occurred |
+| `pong` | Keep-alive response |
+| `exec_result` | Command execution result |
+
+<Warning>
+If the agent doesn't respond to 3 consecutive pings (30 seconds), the connection is considered dead and will be closed by the server.
+</Warning>
+
+## Use Cases
+
+<Tabs>
+  <Tab title="Production Servers">
+    Connect production servers for quick debugging:
+    
+    ```bash
+    rexec-agent register \
+      --name "prod-db-1" \
+      --tags "production,database,postgres" \
+      --description "Primary PostgreSQL instance"
+    ```
+    
+    **Benefits:**
+    - No SSH key management
+    - Access from any device via browser
+    - Audit log of all terminal sessions
+  </Tab>
+  
+  <Tab title="Development Machines">
+    Access your local dev machine remotely:
+    
+    ```bash
+    rexec-agent register \
+      --name "macbook-dev" \
+      --description "Personal dev machine" \
+      --shell /bin/zsh
+    ```
+    
+    **Benefits:**
+    - Work from anywhere
+    - Share terminal with teammates
+    - Consistent development environment
+  </Tab>
+  
+  <Tab title="CI/CD Runners">
+    Debug failed builds on CI runners:
+    
+    ```bash
+    rexec-agent register \
+      --name "ci-runner-${RUNNER_ID}" \
+      --tags "ci,github-actions"
+    ```
+    
+    **Benefits:**
+    - Inspect build artifacts
+    - Reproduce failures locally
+    - Debug flaky tests
+  </Tab>
+  
+  <Tab title="IoT/Edge Devices">
+    Connect Raspberry Pi or edge devices:
+    
+    ```bash
+    rexec-agent register \
+      --name "rpi-sensor-hub" \
+      --shell /bin/sh \
+      --tags "iot,raspberry-pi,sensors"
+    ```
+    
+    **Benefits:**
+    - Remote access to headless devices
+    - No port forwarding needed
+    - Manage fleets of devices
+  </Tab>
+</Tabs>
+
+## Comparison: Agents vs Containers
+
+| Feature | Agent | Cloud Container |
+|---------|-------|------------------|
+| **Setup** | Install on existing server | Provisioned on-demand |
+| **Resources** | Uses host resources | Dedicated container |
+| **Persistence** | Full disk access | Ephemeral or volume-based |
+| **Network** | Host network | Isolated network |
+| **Use Case** | Existing infrastructure | Development sandboxes |
+| **Startup Time** | Instant (already running) | 2-5 seconds |
+| **State** | Always persistent | Can be destroyed |
+
+## Security Considerations
+
+<Card title="Token Security" icon="key">
+  - Tokens grant full shell access to the machine
+  - Store in environment variables or secure config files
+  - Rotate tokens regularly via dashboard
+  - Never commit tokens to Git
+</Card>
+
+<Card title="Network Security" icon="network-wired">
+  - All traffic encrypted via WSS (WebSocket Secure)
+  - Agent initiates connection (no inbound ports)
+  - Validates server TLS certificate
+  - Uses JWT for authentication
+</Card>
+
+<Card title="Shell Access" icon="terminal">
+  - Agent runs with same privileges as the user who started it
+  - Use dedicated service accounts for production agents
+  - Limit shell access via sudo configuration
+  - Enable audit logging for compliance
+</Card>
+
+## Troubleshooting
+
+### Agent Won't Connect
+
+```bash
+# Check agent status
+rexec-agent status
+
+# Run in foreground to see errors
+rexec-agent start
+
+# Common issues:
+# - Invalid token → Verify in dashboard
+# - Network blocked → Check firewall/proxy
+# - Wrong API URL → Check REXEC_HOST
+```
+
+### Verify Token
+
+```bash
+curl -H "Authorization: Bearer $REXEC_TOKEN" \
+  https://rexec.pipeops.io/api/profile
+# Should return your user profile
+```
+
+### Connection Keeps Dropping
+
+1. **Network stability**: Check for packet loss or high latency
+2. **Firewall**: Ensure WebSocket connections aren't blocked
+3. **Proxy**: Configure `HTTP_PROXY` if behind corporate proxy
+4. **Logs**: Check systemd logs for errors
+
+```bash
+sudo journalctl -u rexec-agent -f
+```
+
+### Shell Not Working
+
+```bash
+# Verify shell exists
+which bash
+ls -la /bin/bash
+
+# Try different shell
+rexec-agent register --shell /bin/sh
+
+# Check permissions
+ls -la $(which bash)
+```
+
+## Managing System Service
+
+### systemd Commands
+
+```bash
+# Check status
+sudo systemctl status rexec-agent
+
+# View logs
+sudo journalctl -u rexec-agent -f
+
+# Restart service
+sudo systemctl restart rexec-agent
+
+# Stop service
+sudo systemctl stop rexec-agent
+
+# Enable on boot
+sudo systemctl enable rexec-agent
+
+# Disable
+sudo systemctl disable rexec-agent
+```
+
+### Service Configuration
+
+The systemd service file is installed at `/etc/systemd/system/rexec-agent.service`:
+
+```ini
+[Unit]
+Description=Rexec Agent
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/rexec-agent start
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## API Reference
+
+### Register Agent
+
+```http
+POST /api/agents/register
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "name": "server-name",
+  "description": "Server description",
+  "type": "agent",
+  "os": "linux",
+  "arch": "amd64",
+  "shell": "/bin/bash",
+  "tags": ["tag1", "tag2"]
+}
+```
+
+### Unregister Agent
+
+```http
+DELETE /api/agents/{agent_id}
+Authorization: Bearer <token>
+```
+
+### Get Agent Status
+
+```http
+GET /api/agents/{agent_id}
+Authorization: Bearer <token>
+```
+
+## Best Practices
+
+<Card title="Use Service Accounts" icon="user-shield">
+  Create dedicated users for agents instead of running as root:
+  
+  ```bash
+  sudo useradd -m -s /bin/bash rexec-agent
+  sudo su - rexec-agent
+  rexec-agent register --name "prod-server"
+  ```
+</Card>
+
+<Card title="Tag Your Agents" icon="tags">
+  Use tags for organization and filtering:
+  
+  ```bash
+  --tags "production,us-east-1,postgres,primary"
+  ```
+</Card>
+
+<Card title="Monitor Connection Health" icon="heart-pulse">
+  Set up alerts for agent disconnections in your monitoring system.
+</Card>
+
+<Card title="Rotate Tokens" icon="arrows-rotate">
+  Regenerate agent tokens periodically (every 90 days recommended).
+</Card>
+
+## Related Features
+
+<CardGroup cols={2}>
+  <Card title="Cloud Terminals" icon="cloud" href="/features/cloud-terminals">
+    On-demand Docker containers as an alternative to agents
+  </Card>
+  <Card title="Collaboration" icon="users" href="/features/collaboration">
+    Share agent terminals with your team
+  </Card>
+  <Card title="Session Recording" icon="circle-dot" href="/features/session-recording">
+    Record agent terminal sessions for audit trails
+  </Card>
+  <Card title="Security" icon="lock" href="/features/security">
+    Learn about MFA protection for sensitive terminals
+  </Card>
+</CardGroup>

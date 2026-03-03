@@ -1,0 +1,573 @@
+---
+title: Security Features
+description: Comprehensive security with JWT authentication, MFA protection, audit logging, and container hardening
+---
+
+## Overview
+
+Rexec is **secure by default**, implementing multiple layers of defense to protect your terminals and data. From JWT-based authentication to container isolation, every feature is designed with security as a priority.
+
+<Info>
+Rexec follows industry best practices including CIS Docker Benchmark, OWASP Container Security, and zero-trust principles.
+</Info>
+
+## Authentication & Authorization
+
+### JWT Authentication
+
+All API requests require valid JWT tokens or API keys in the Authorization header:
+
+```bash
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Token Properties:**
+- **Algorithm**: HS256 (HMAC-SHA256)
+- **Expiry**: Configurable (default 24 hours)
+- **Claims**: `user_id`, `email`, `roles`, `exp`, `iat`
+- **Secret**: Configured via `JWT_SECRET` environment variable
+
+<Warning>
+**Critical**: Set a strong `JWT_SECRET` in production. Random generation at startup is insecure for multi-instance deployments.
+</Warning>
+
+### API Keys
+
+Long-lived tokens for programmatic access:
+
+```bash
+# Generate API key in dashboard
+curl -X POST https://your-instance.com/api/profile/keys \
+  -H "Authorization: Bearer $JWT_TOKEN" \
+  -d '{"name": "CI/CD Integration", "expires_days": 90}'
+
+# Use API key
+curl -H "Authorization: Bearer rexec_api_abc123..." \
+  https://your-instance.com/api/containers
+```
+
+**Best Practices:**
+- Rotate keys every 90 days
+- Use separate keys per service/environment
+- Store in secrets manager, not environment variables
+- Revoke immediately if compromised
+
+## Multi-Factor Authentication (MFA)
+
+From `internal/auth/mfa.go:13`:
+
+### Setup Process
+
+1. Navigate to **Account Settings → Security**
+2. Click **Enable MFA**
+3. Scan QR code with authenticator app (Google Authenticator, Authy, 1Password)
+4. Enter 6-digit verification code
+5. Save backup codes securely
+
+<Tabs>
+  <Tab title="TOTP Generation">
+    From `internal/auth/mfa.go:26`:
+    
+    ```go
+    func (s *MFAService) GenerateSecret(accountName string) (string, error) {
+        key, err := totp.Generate(totp.GenerateOpts{
+            Issuer:      s.issuer,      // "Rexec"
+            AccountName: accountName,   // user email
+        })
+        return key.Secret(), nil
+    }
+    ```
+    
+    Uses standard TOTP (Time-based One-Time Password) algorithm (RFC 6238).
+  </Tab>
+  
+  <Tab title="Validation">
+    From `internal/auth/mfa.go:44`:
+    
+    ```go
+    func (s *MFAService) Validate(passcode, secret string) bool {
+        return totp.Validate(passcode, secret)
+    }
+    ```
+    
+    Accepts codes within ±1 time window (90 seconds total).
+  </Tab>
+  
+  <Tab title="Backup Codes">
+    From `internal/auth/mfa.go:60`:
+    
+    ```go
+    func GenerateBackupCodes(count int) ([]string, error) {
+        codes := make([]string, count)  // Default: 10 codes
+        for i := 0; i < count; i++ {
+            code := generateRandomCode(8)  // 8 chars: XXXX-XXXX
+            codes[i] = code
+        }
+        return codes, nil
+    }
+    ```
+    
+    One-time use codes for account recovery.
+  </Tab>
+</Tabs>
+
+### Terminal MFA Lock
+
+From `docs/SECURITY.md:120`:
+
+Protect sensitive terminals with per-terminal MFA:
+
+```bash
+# Lock terminal with MFA
+curl -X POST https://your-instance.com/api/security/terminal/{id}/mfa-lock \
+  -H "Authorization: Bearer $TOKEN"
+
+# Accessing locked terminal requires MFA code
+# Dashboard prompts for 6-digit code from authenticator
+
+# Unlock terminal
+curl -X POST https://your-instance.com/api/security/terminal/{id}/mfa-unlock \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"code": "123456"}'
+```
+
+**Use Cases:**
+- Production database terminals
+- Terminals with access to secrets
+- Compliance requirements for privileged access
+- Shared accounts needing extra protection
+
+<Info>
+Terminal MFA locks are independent from account MFA. Both can be enabled simultaneously for defense in depth.
+</Info>
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/security/terminal/:id/mfa-status` | GET | Check if terminal is MFA-locked |
+| `/api/security/terminal/:id/mfa-lock` | POST | Enable MFA protection |
+| `/api/security/terminal/:id/mfa-unlock` | POST | Remove MFA lock (requires code) |
+| `/api/security/terminal/:id/mfa-verify` | POST | Verify access without unlocking |
+
+## Container Security
+
+From `docs/SECURITY.md:1` and `internal/container/manager.go:1069`:
+
+### Capability Restrictions
+
+Containers run with **minimal Linux capabilities**:
+
+```go
+// From internal/container/manager.go:1159
+CapDrop: []string{"ALL"},
+CapAdd: []string{
+    "CHOWN",            // Change file ownership
+    "DAC_OVERRIDE",     // Bypass file permission checks (for sudo)
+    "FOWNER",           // Bypass owner checks
+    "SETGID",           // Set group ID
+    "SETUID",           // Set user ID (for su/sudo)
+    "KILL",             // Send signals
+    "NET_BIND_SERVICE", // Bind to ports < 1024
+    "SYS_PTRACE",       // For debugging/TUI apps
+},
+```
+
+**Blocked capabilities** (security-sensitive):
+- `SYS_ADMIN` - Mount filesystems, load kernel modules
+- `SYS_PTRACE` - Trace processes (except explicitly allowed)
+- `NET_ADMIN` - Modify network configuration
+- `SYS_BOOT` - Reboot system
+- `SYS_MODULE` - Load/unload kernel modules
+
+### Privilege Escalation Prevention
+
+From `docs/SECURITY.md:23`:
+
+```go
+SecurityOpt: []string{
+    "no-new-privileges:true",  // Prevent gaining additional privileges
+},
+Privileged: false,  // Cannot access host devices
+```
+
+### Filesystem Security
+
+<Tabs>
+  <Tab title="Masked Paths">
+    Sensitive host information hidden from containers:
+    
+    ```go
+    MaskedPaths: []string{
+        "/proc/kcore",      // Kernel memory
+        "/proc/keys",       // Kernel keyrings
+        "/proc/latency_stats",
+        "/proc/timer_list",
+        "/sys/firmware",    // BIOS/firmware info
+        "/sys/devices/virtual/powercap",
+        "/sys/kernel",      // Kernel parameters
+    },
+    ```
+  </Tab>
+  
+  <Tab title="Read-Only Paths">
+    Critical paths mounted read-only:
+    
+    ```go
+    ReadonlyPaths: []string{
+        "/proc/bus",
+        "/proc/fs",
+        "/proc/irq",
+        "/proc/sys",        // Kernel tunables
+        "/proc/sysrq-trigger",
+    },
+    ```
+  </Tab>
+  
+  <Tab title="Tmpfs Mounts">
+    Writable directories use tmpfs with size limits:
+    
+    ```go
+    Tmpfs: map[string]string{
+        "/tmp":                    "rw,exec,nosuid,size=256m",
+        "/var/tmp":                "rw,noexec,nosuid,size=50m",
+        "/run":                    "rw,noexec,nosuid,size=50m",
+        "/var/log":                "rw,noexec,nosuid,size=50m",
+        "/var/cache/apt/archives": "rw,noexec,nosuid,size=500m",
+    },
+    ```
+  </Tab>
+</Tabs>
+
+### Resource Limits
+
+From `docs/SECURITY.md:77`:
+
+```go
+Resources: container.Resources{
+    Memory:     cfg.MemoryLimit,        // Hard limit
+    MemorySwap: cfg.MemoryLimit,        // Disable swap
+    CPUPeriod:  100000,                 // 100ms
+    CPUQuota:   (cfg.CPULimit * 100000) / 1000,
+    PidsLimit:  &[]int64{512}[0],       // Fork bomb protection
+},
+```
+
+**Enforced Limits:**
+- **Memory**: Hard limit via cgroup, OOM killer if exceeded
+- **CPU**: CFS quota prevents CPU monopolization
+- **PIDs**: Maximum 512 processes per container
+- **Disk**: XFS quotas (if available)
+
+### Network Isolation
+
+From `internal/container/manager.go:660`:
+
+```go
+func (m *Manager) ensureIsolatedNetwork() error {
+    _, err := m.client.NetworkCreate(ctx, "rexec-isolated", network.CreateOptions{
+        Driver: "bridge",
+        Options: map[string]string{
+            "com.docker.network.bridge.enable_icc": "false",  // Disable ICC
+        },
+    })
+    return err
+}
+```
+
+**Network Security:**
+- Containers run in `rexec-isolated` network
+- Inter-Container Communication (ICC) disabled
+- Containers cannot reach each other
+- Outbound internet access enabled
+- No inbound access from host network
+
+## Audit Logging
+
+Rexec logs security-relevant events for compliance and incident response:
+
+### Logged Events
+
+**Authentication:**
+- `user_login` - Successful login
+- `user_login_failed` - Failed login attempt
+- `user_logout` - User logged out
+- `mfa_enabled` - MFA enabled on account
+- `mfa_disabled` - MFA disabled
+
+**Terminal Access:**
+- `terminal_connected` - User connected to terminal
+- `terminal_disconnected` - Connection closed
+- `terminal_mfa_locked` - Terminal protected with MFA
+- `terminal_mfa_unlocked` - MFA protection removed
+- `terminal_mfa_access_verified` - User verified MFA to access
+
+**Container Lifecycle:**
+- `container_created` - Container created
+- `container_started` - Container started
+- `container_stopped` - Container stopped
+- `container_destroyed` - Container permanently deleted
+
+**Collaboration:**
+- `collab_session_created` - Collaboration session started
+- `collab_participant_joined` - User joined session
+- `collab_participant_left` - User left session
+- `collab_session_ended` - Session closed
+
+**Recordings:**
+- `recording_started` - Recording began
+- `recording_stopped` - Recording ended
+
+### Log Format
+
+```json
+{
+  "timestamp": "2024-03-15T14:30:00Z",
+  "event": "terminal_connected",
+  "user_id": "user-123",
+  "user_email": "alice@example.com",
+  "container_id": "abc123...",
+  "ip_address": "192.168.1.100",
+  "user_agent": "Mozilla/5.0 ..."
+}
+```
+
+### Querying Logs
+
+```bash
+# Get audit logs for user
+curl -X GET "https://your-instance.com/api/audit?user_id=user-123&limit=100" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Filter by event type
+curl -X GET "https://your-instance.com/api/audit?event=terminal_connected" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Date range query
+curl -X GET "https://your-instance.com/api/audit?from=2024-03-01&to=2024-03-15" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+<Info>
+Audit logs are stored in PostgreSQL and retained according to your configured retention policy (default: 90 days).
+</Info>
+
+## Security Best Practices
+
+<Card title="Rotate Secrets Regularly" icon="key">
+  - JWT secret: Change every 6 months
+  - API keys: Rotate every 90 days
+  - MFA backup codes: Regenerate after use
+  - Agent tokens: Rotate quarterly
+</Card>
+
+<Card title="Enable MFA for All Users" icon="shield-halved">
+  Require MFA for all accounts, especially:
+  - Admin accounts
+  - Production access
+  - API key generation
+</Card>
+
+<Card title="Monitor Audit Logs" icon="chart-line">
+  Set up alerts for:
+  - Repeated failed login attempts
+  - MFA disable events
+  - Unusual access patterns
+  - Container creation spikes
+</Card>
+
+<Card title="Limit Container Resources" icon="gauge">
+  Set appropriate resource limits:
+  - Memory: 512MB-2GB for most workloads
+  - CPU: 0.5-2 cores typical
+  - Disk: Enable quotas on production
+</Card>
+
+<Card title="Use Agent Service Accounts" icon="user-shield">
+  Run agents as dedicated users, not root:
+  
+  ```bash
+  sudo useradd -m -s /bin/bash rexec-agent
+  sudo su - rexec-agent
+  rexec-agent register
+  ```
+</Card>
+
+## Security Verification
+
+### Check Container Security
+
+Run these commands inside a container to verify hardening:
+
+```bash
+# Check capabilities
+cat /proc/self/status | grep Cap
+# CapEff should show limited capabilities
+
+# Verify user context
+id
+whoami
+# Should not be root (unless explicitly configured)
+
+# Check mount restrictions
+mount | grep -E "(proc|sys|dev)"
+# Should see read-only and masked paths
+
+# Network isolation
+ip addr show
+# Container in isolated network
+
+# Resource limits
+ulimit -a
+# Should show configured limits
+```
+
+### Security Scoring
+
+From `docs/SECURITY.md:113`:
+
+| Configuration | Score | Description |
+|---------------|-------|-------------|
+| Basic Docker | 6/10 | Default Docker isolation only |
+| Rexec (default) | 8/10 | Enhanced security (caps, network, etc.) |
+| Rexec + gVisor | 9/10 | Kernel-level isolation with runsc |
+
+## Advanced Security Options
+
+### gVisor Runtime
+
+For maximum isolation, use gVisor (runsc):
+
+```bash
+# Install gVisor
+curl -fsSL https://gvisor.dev/archive.key | sudo apt-key add -
+sudo apt-get update && sudo apt-get install -y runsc
+
+# Configure Rexec
+OCI_RUNTIME=runsc
+
+# Create container
+# Uses gVisor for kernel-level isolation
+```
+
+<Warning>
+gVisor does not support overlay2 disk quotas. Trade-off between security and resource management.
+</Warning>
+
+### Custom Seccomp Profile
+
+For stricter syscall filtering, create a custom seccomp profile:
+
+```json
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "syscalls": [
+    {
+      "names": ["read", "write", "open", "close", "stat", ...],
+      "action": "SCMP_ACT_ALLOW"
+    }
+  ]
+}
+```
+
+Configure via Docker:
+
+```bash
+--security-opt seccomp=/path/to/profile.json
+```
+
+### AppArmor/SELinux
+
+Mandatory Access Control for additional layer:
+
+```bash
+# AppArmor profile
+--security-opt apparmor=rexec-container
+
+# SELinux context
+--security-opt label=type:rexec_container_t
+```
+
+## Compliance
+
+Rexec security features help meet common compliance requirements:
+
+### SOC 2
+- ✅ Audit logging of all access
+- ✅ MFA for user authentication
+- ✅ Encryption in transit (HTTPS/WSS)
+- ✅ Access controls and authorization
+
+### HIPAA
+- ✅ Audit trails for PHI access
+- ✅ Encryption at rest and in transit
+- ✅ Access controls and authentication
+- ✅ Session recording for compliance review
+
+### PCI DSS
+- ✅ Strong authentication (MFA)
+- ✅ Network segmentation (isolated containers)
+- ✅ Audit logging and monitoring
+- ✅ Access controls for cardholder data
+
+### ISO 27001
+- ✅ Access control policies
+- ✅ Cryptographic controls
+- ✅ Operational security (container hardening)
+- ✅ Logging and monitoring
+
+## Troubleshooting
+
+### MFA Issues
+
+**Problem**: TOTP codes not working
+
+**Solutions**:
+1. Check device time sync (TOTP requires accurate time)
+2. Verify correct secret in authenticator app
+3. Use backup code if available
+4. Contact admin to reset MFA
+
+### Terminal Access Denied
+
+**Problem**: "Forbidden" error when connecting to terminal
+
+**Checklist**:
+1. Verify JWT token not expired
+2. Check container ownership
+3. Verify collaboration session if shared
+4. Check audit logs for denied access events
+
+### Container Security Warnings
+
+**Problem**: Docker warnings about security settings
+
+**Resolution**:
+```bash
+# Check Docker version
+docker --version
+# Update if < 20.10
+
+# Verify seccomp support
+docker info | grep seccomp
+
+# Check AppArmor
+sudo aa-status
+```
+
+## Related Features
+
+<CardGroup cols={2}>
+  <Card title="Cloud Terminals" icon="cloud" href="/features/cloud-terminals">
+    Container security hardening details
+  </Card>
+  <Card title="BYOS Agents" icon="server" href="/features/agents">
+    Agent authentication and token security
+  </Card>
+  <Card title="Collaboration" icon="users" href="/features/collaboration">
+    Share session security considerations
+  </Card>
+  <Card title="Session Recording" icon="circle-dot" href="/features/session-recording">
+    Recording access controls and compliance
+  </Card>
+</CardGroup>

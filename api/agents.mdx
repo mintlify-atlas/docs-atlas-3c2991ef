@@ -1,0 +1,453 @@
+---
+title: Agent Endpoints
+description: Register and manage BYOS (Bring Your Own Server) agents
+---
+
+## Overview
+
+Agent endpoints allow you to register remote machines as terminals in Rexec. This enables you to access your own servers through the Rexec dashboard without exposing SSH ports or managing complex network configurations.
+
+<Note>
+  Agents are a Pro/Enterprise feature. Free tier users cannot register agents.
+</Note>
+
+## Register Agent
+
+Register a new agent terminal. Returns an API token that the agent binary uses to authenticate.
+
+```bash
+POST /api/agents/register
+```
+
+<CodeGroup>
+```bash cURL
+curl -X POST https://api.rexec.io/api/agents/register \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "production-server-1",
+    "description": "Main production API server",
+    "os": "linux",
+    "arch": "amd64",
+    "shell": "/bin/bash",
+    "tags": ["production", "api", "aws"]
+  }'
+```
+
+```javascript JavaScript
+const response = await fetch('https://api.rexec.io/api/agents/register', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer YOUR_TOKEN',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    name: 'production-server-1',
+    description: 'Main production API server',
+    os: 'linux',
+    arch: 'amd64',
+    shell: '/bin/bash',
+    tags: ['production', 'api', 'aws']
+  })
+});
+const agent = await response.json();
+console.log('Agent token:', agent.token);
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    'https://api.rexec.io/api/agents/register',
+    headers={'Authorization': 'Bearer YOUR_TOKEN'},
+    json={
+        'name': 'production-server-1',
+        'description': 'Main production API server',
+        'os': 'linux',
+        'arch': 'amd64',
+        'shell': '/bin/bash',
+        'tags': ['production', 'api', 'aws']
+    }
+)
+agent = response.json()
+print(f"Agent ID: {agent['id']}")
+print(f"Token: {agent['token']}")
+```
+</CodeGroup>
+
+<ParamField body="name" type="string" required>
+  Agent name (must be unique per user)
+</ParamField>
+
+<ParamField body="description" type="string">
+  Optional description of the server
+</ParamField>
+
+<ParamField body="os" type="string">
+  Operating system: `linux`, `darwin` (macOS), `windows`
+</ParamField>
+
+<ParamField body="arch" type="string">
+  CPU architecture: `amd64`, `arm64`, `386`, `arm`
+</ParamField>
+
+<ParamField body="shell" type="string">
+  Default shell path (e.g., `/bin/bash`, `/bin/zsh`)
+</ParamField>
+
+<ParamField body="tags" type="array">
+  Array of tags for organization and filtering
+</ParamField>
+
+<ResponseExample>
+```json 201 Created
+{
+  "id": "agent_abc123def456",
+  "name": "production-server-1",
+  "token": "rexec_1234567890abcdefghijklmnopqrstuvwxyz",
+  "token_info": {
+    "id": "token_xyz789",
+    "name": "agent-production-server-1",
+    "scopes": ["agent"],
+    "note": "This token is used for agent authentication. Save it securely - it won't be shown again."
+  }
+}
+```
+</ResponseExample>
+
+<Warning>
+  The agent token is only shown once during registration. Save it securely. If lost, you'll need to generate a new API token manually.
+</Warning>
+
+## List Agents
+
+List all registered agents for the authenticated user.
+
+```bash
+GET /api/agents
+```
+
+<CodeGroup>
+```bash cURL
+curl -X GET https://api.rexec.io/api/agents \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```javascript JavaScript
+const response = await fetch('https://api.rexec.io/api/agents', {
+  headers: { 'Authorization': 'Bearer YOUR_TOKEN' }
+});
+const agents = await response.json();
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    'https://api.rexec.io/api/agents',
+    headers={'Authorization': 'Bearer YOUR_TOKEN'}
+)
+agents = response.json()
+```
+</CodeGroup>
+
+<ResponseField name="agents" type="array">
+  Array of agent objects
+  
+  <Expandable title="Agent Object">
+    <ResponseField name="id" type="string" required>
+      Agent ID
+    </ResponseField>
+    
+    <ResponseField name="name" type="string" required>
+      Agent name
+    </ResponseField>
+    
+    <ResponseField name="description" type="string">
+      Agent description
+    </ResponseField>
+    
+    <ResponseField name="os" type="string" required>
+      Operating system
+    </ResponseField>
+    
+    <ResponseField name="arch" type="string" required>
+      CPU architecture
+    </ResponseField>
+    
+    <ResponseField name="shell" type="string" required>
+      Shell path
+    </ResponseField>
+    
+    <ResponseField name="status" type="string" required>
+      Connection status: `online` or `offline`
+    </ResponseField>
+    
+    <ResponseField name="created_at" type="timestamp" required>
+      Registration timestamp
+    </ResponseField>
+    
+    <ResponseField name="last_ping" type="timestamp">
+      Last heartbeat timestamp (if online)
+    </ResponseField>
+    
+    <ResponseField name="mfa_locked" type="boolean">
+      Whether MFA is required to access this agent
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseExample>
+```json 200 OK
+[
+  {
+    "id": "agent_abc123",
+    "name": "production-server-1",
+    "description": "Main production API server",
+    "os": "linux",
+    "arch": "amd64",
+    "shell": "/bin/bash",
+    "status": "online",
+    "created_at": "2024-01-15T10:00:00Z",
+    "last_ping": "2024-01-15T12:30:45Z",
+    "mfa_locked": false
+  },
+  {
+    "id": "agent_def456",
+    "name": "staging-server",
+    "description": "Staging environment",
+    "os": "linux",
+    "arch": "arm64",
+    "shell": "/bin/zsh",
+    "status": "offline",
+    "created_at": "2024-01-10T08:00:00Z",
+    "mfa_locked": false
+  }
+]
+```
+</ResponseExample>
+
+## Get Agent
+
+Retrieve details for a specific agent.
+
+```bash
+GET /api/agents/:id
+```
+
+<ParamField path="id" type="string" required>
+  Agent ID
+</ParamField>
+
+<ResponseExample>
+```json 200 OK
+{
+  "id": "agent_abc123",
+  "name": "production-server-1",
+  "description": "Main production API server",
+  "os": "linux",
+  "arch": "amd64",
+  "shell": "/bin/bash",
+  "status": "online",
+  "created_at": "2024-01-15T10:00:00Z",
+  "last_ping": "2024-01-15T12:30:45Z",
+  "mfa_locked": false
+}
+```
+</ResponseExample>
+
+## Update Agent
+
+Update agent name and description.
+
+```bash
+PATCH /api/agents/:id
+```
+
+<ParamField path="id" type="string" required>
+  Agent ID
+</ParamField>
+
+<ParamField body="name" type="string">
+  New agent name
+</ParamField>
+
+<ParamField body="description" type="string">
+  New agent description
+</ParamField>
+
+<CodeGroup>
+```bash cURL
+curl -X PATCH https://api.rexec.io/api/agents/agent_abc123 \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "prod-api-1",
+    "description": "Production API server (updated)"
+  }'
+```
+
+```javascript JavaScript
+const response = await fetch('https://api.rexec.io/api/agents/agent_abc123', {
+  method: 'PATCH',
+  headers: {
+    'Authorization': 'Bearer YOUR_TOKEN',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    name: 'prod-api-1',
+    description: 'Production API server (updated)'
+  })
+});
+```
+</CodeGroup>
+
+<ResponseExample>
+```json 200 OK
+{
+  "id": "agent_abc123",
+  "name": "prod-api-1",
+  "description": "Production API server (updated)",
+  "message": "Agent updated successfully"
+}
+```
+</ResponseExample>
+
+## Delete Agent
+
+Unregister an agent. This will disconnect the agent if online and remove it from your account.
+
+```bash
+DELETE /api/agents/:id
+```
+
+<ParamField path="id" type="string" required>
+  Agent ID
+</ParamField>
+
+<CodeGroup>
+```bash cURL
+curl -X DELETE https://api.rexec.io/api/agents/agent_abc123 \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```javascript JavaScript
+const response = await fetch('https://api.rexec.io/api/agents/agent_abc123', {
+  method: 'DELETE',
+  headers: { 'Authorization': 'Bearer YOUR_TOKEN' }
+});
+```
+
+```python Python
+import requests
+
+response = requests.delete(
+    'https://api.rexec.io/api/agents/agent_abc123',
+    headers={'Authorization': 'Bearer YOUR_TOKEN'}
+)
+```
+</CodeGroup>
+
+<ResponseExample>
+```json 200 OK
+{
+  "message": "agent deleted"
+}
+```
+</ResponseExample>
+
+<Warning>
+  Deleting an agent is permanent. The agent will be disconnected immediately and will need to be re-registered to connect again.
+</Warning>
+
+## Get Agent Status
+
+Get detailed status and system information for an agent.
+
+```bash
+GET /api/agents/:id/status
+```
+
+<ParamField path="id" type="string" required>
+  Agent ID
+</ParamField>
+
+<ResponseExample>
+```json 200 OK (Online)
+{
+  "status": "online",
+  "connected_at": "2024-01-15T12:00:00Z",
+  "last_ping": "2024-01-15T12:30:45Z",
+  "sessions": 2,
+  "os": "linux",
+  "arch": "amd64",
+  "system_info": {
+    "hostname": "prod-api-1",
+    "num_cpu": 8,
+    "memory": {
+      "total": 17179869184,
+      "available": 8589934592,
+      "used": 8589934592,
+      "percent": 50.0
+    },
+    "disk": {
+      "total": 107374182400,
+      "used": 53687091200,
+      "free": 53687091200,
+      "percent": 50.0
+    }
+  },
+  "stats": {
+    "cpu_usage": 25.5,
+    "memory_usage": 8589934592,
+    "memory_limit": 17179869184,
+    "memory_percent": 50.0
+  }
+}
+```
+
+```json 200 OK (Offline)
+{
+  "status": "offline"
+}
+```
+</ResponseExample>
+
+## Agent Limits
+
+| Tier | Max Registered Agents | Max Concurrent Terminals |
+|------|----------------------|-------------------------|
+| Free | 5 | 5 |
+| Pro | 10 | 10 |
+| Enterprise | 25 | 25 |
+
+<Note>
+  "Max Concurrent Terminals" refers to the number of distinct agents you can have terminal sessions open to at the same time. Multiple tabs/panes to the same agent count as one.
+</Note>
+
+## Installing the Agent
+
+After registering an agent via the API, install and run the agent binary on your server:
+
+```bash
+# Download the agent binary
+curl -sSL https://rexec.pipeops.io/install-agent.sh | bash
+
+# Set the token (from registration response)
+export REXEC_TOKEN="rexec_your_token_here"
+
+# Start the agent
+rexec-agent start --daemon
+```
+
+See the [Agents documentation](/docs/agents) for detailed installation and configuration instructions.
+
+## WebSocket Connection (Agent Binary)
+
+The agent binary connects to Rexec via WebSocket. This endpoint is only used by the agent binary itself, not by API consumers.
+
+```
+wss://api.rexec.io/ws/agent/:agentId
+```
+
+Authentication is done via the agent token (obtained during registration).

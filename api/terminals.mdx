@@ -1,0 +1,464 @@
+---
+title: Terminal Endpoints
+description: Connect to interactive terminal sessions via WebSocket
+---
+
+## Overview
+
+Terminal endpoints provide WebSocket connections to container shells. Rexec supports full PTY with real-time bidirectional communication, terminal resizing, and session persistence via tmux.
+
+<Note>
+  Terminal connections use the WebSocket protocol for real-time, low-latency communication. HTTP endpoints are not available for terminal I/O.
+</Note>
+
+## WebSocket Connection
+
+Connect to a container's terminal via WebSocket.
+
+```
+wss://api.rexec.io/ws/terminal/:containerId
+```
+
+### Authentication
+
+Authentication is done via one of these methods:
+
+1. **Authorization Header** (recommended)
+   ```
+   Authorization: Bearer YOUR_TOKEN
+   ```
+
+2. **WebSocket Subprotocol**
+   ```
+   Sec-WebSocket-Protocol: rexec.v1, rexec.token.YOUR_TOKEN
+   ```
+
+3. **Query Parameter** (fallback)
+   ```
+   wss://api.rexec.io/ws/terminal/:containerId?token=YOUR_TOKEN
+   ```
+
+### Connection Parameters
+
+<ParamField path="containerId" type="string" required>
+  Container ID (Docker ID or DB ID)
+</ParamField>
+
+<ParamField query="id" type="string">
+  Stable connection ID for reconnection (generates unique ID if not provided). Use the same ID to reconnect to the same session.
+</ParamField>
+
+<ParamField query="newSession" type="boolean" default="false">
+  Create a new tmux session instead of resuming the main session (used for split panes)
+</ParamField>
+
+### Example Connection
+
+<CodeGroup>
+```javascript JavaScript
+const ws = new WebSocket(
+  'wss://api.rexec.io/ws/terminal/abc123?id=tab-1',
+  ['rexec.v1', `rexec.token.${token}`]
+);
+
+ws.onopen = () => {
+  console.log('Terminal connected');
+  // Send initial resize
+  ws.send(JSON.stringify({
+    type: 'resize',
+    cols: 80,
+    rows: 24
+  }));
+};
+
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  
+  switch (msg.type) {
+    case 'connected':
+      console.log('Session established');
+      break;
+    case 'output':
+      terminal.write(msg.data); // Write to xterm.js
+      break;
+    case 'error':
+      console.error('Error:', msg.data);
+      break;
+  }
+};
+
+ws.onerror = (error) => {
+  console.error('WebSocket error:', error);
+};
+
+ws.onclose = () => {
+  console.log('Terminal disconnected');
+};
+```
+
+```python Python
+import asyncio
+import websockets
+import json
+
+async def connect_terminal():
+    uri = f"wss://api.rexec.io/ws/terminal/abc123?token={token}"
+    
+    async with websockets.connect(uri) as ws:
+        # Send resize
+        await ws.send(json.dumps({
+            'type': 'resize',
+            'cols': 80,
+            'rows': 24
+        }))
+        
+        # Read output
+        async for message in ws:
+            msg = json.loads(message)
+            
+            if msg['type'] == 'output':
+                print(msg['data'], end='')
+            elif msg['type'] == 'error':
+                print(f"Error: {msg['data']}")
+
+asyncio.run(connect_terminal())
+```
+
+```go Go
+import (
+    "encoding/json"
+    "fmt"
+    "github.com/gorilla/websocket"
+)
+
+func connectTerminal(containerID, token string) {
+    url := fmt.Sprintf("wss://api.rexec.io/ws/terminal/%s", containerID)
+    
+    headers := http.Header{}
+    headers.Add("Authorization", "Bearer "+token)
+    
+    conn, _, err := websocket.DefaultDialer.Dial(url, headers)
+    if err != nil {
+        panic(err)
+    }
+    defer conn.Close()
+    
+    // Send resize
+    conn.WriteJSON(map[string]interface{}{
+        "type": "resize",
+        "cols": 80,
+        "rows": 24,
+    })
+    
+    // Read messages
+    for {
+        var msg map[string]interface{}
+        err := conn.ReadJSON(&msg)
+        if err != nil {
+            break
+        }
+        
+        if msg["type"] == "output" {
+            fmt.Print(msg["data"])
+        }
+    }
+}
+```
+</CodeGroup>
+
+## Message Types
+
+### Client to Server
+
+#### Input
+
+Send keyboard input to the terminal.
+
+```json
+{
+  "type": "input",
+  "data": "ls -la\n"
+}
+```
+
+<ParamField body="type" type="string" required>
+  Must be `input`
+</ParamField>
+
+<ParamField body="data" type="string" required>
+  Input text to send to the terminal
+</ParamField>
+
+#### Resize
+
+Resize the terminal dimensions.
+
+```json
+{
+  "type": "resize",
+  "cols": 120,
+  "rows": 30
+}
+```
+
+<ParamField body="type" type="string" required>
+  Must be `resize`
+</ParamField>
+
+<ParamField body="cols" type="integer" required>
+  Terminal width in columns
+</ParamField>
+
+<ParamField body="rows" type="integer" required>
+  Terminal height in rows
+</ParamField>
+
+#### Ping
+
+Keep the connection alive.
+
+```json
+{
+  "type": "ping"
+}
+```
+
+### Server to Client
+
+#### Connected
+
+Sent when the WebSocket connection is established.
+
+```json
+{
+  "type": "connected",
+  "data": "Terminal session established"
+}
+```
+
+#### Shell Starting
+
+Sent when the shell is being initialized.
+
+```json
+{
+  "type": "shell_starting",
+  "data": "Starting shell..."
+}
+```
+
+#### Shell Ready
+
+Sent when the shell is ready to receive input.
+
+```json
+{
+  "type": "shell_ready",
+  "data": "Shell ready"
+}
+```
+
+#### Output
+
+Terminal output data (ANSI escape sequences included).
+
+```json
+{
+  "type": "output",
+  "data": "user@container:~$ "
+}
+```
+
+<ParamField name="type" type="string">
+  Always `output`
+</ParamField>
+
+<ParamField name="data" type="string">
+  Raw terminal output with ANSI codes
+</ParamField>
+
+#### Container Status
+
+Sent when the container status changes.
+
+```json
+{
+  "type": "container_status",
+  "data": "running"
+}
+```
+
+#### Stats
+
+Real-time resource usage statistics.
+
+```json
+{
+  "type": "stats",
+  "data": {
+    "cpu_usage": 15.2,
+    "memory_usage": 512000000,
+    "memory_limit": 2147483648,
+    "memory_percent": 23.8,
+    "net_input": 1024000,
+    "net_output": 2048000
+  }
+}
+```
+
+#### Error
+
+Error message from the server.
+
+```json
+{
+  "type": "error",
+  "data": "Failed to attach to terminal: container not running"
+}
+```
+
+#### Pong
+
+Response to client ping.
+
+```json
+{
+  "type": "pong"
+}
+```
+
+## Connection Lifecycle
+
+1. **Establish Connection**
+   - Client opens WebSocket with authentication
+   - Server verifies token and container ownership
+   - Server checks container status (must be `running` or `configuring`)
+
+2. **Session Setup**
+   - Server sends `connected` message
+   - Server sends `shell_starting` message
+   - Server creates exec session in container
+   - Server sends `shell_ready` message
+
+3. **Active Session**
+   - Client sends input messages
+   - Server streams output messages
+   - Server sends periodic stats updates
+   - Client sends resize messages as needed
+
+4. **Disconnection**
+   - Either side closes the WebSocket
+   - Shell process continues in tmux session (if enabled)
+   - Client can reconnect with same `id` to resume
+
+## Session Persistence with tmux
+
+Rexec uses tmux for session persistence by default (when `use_tmux` is enabled):
+
+- **Main Session**: Shared session named `main` that persists across disconnects
+- **Split Sessions**: Unique sessions for split panes (`split-<id>`)
+- **Reconnection**: Use the same connection `id` to reconnect to the same session
+
+```javascript
+// Connect to main session
+const ws1 = new WebSocket('wss://api.rexec.io/ws/terminal/abc123?id=main');
+
+// Create split pane (new session)
+const ws2 = new WebSocket('wss://api.rexec.io/ws/terminal/abc123?id=split-1&newSession=true');
+```
+
+## Error Responses
+
+The WebSocket may close with these error codes:
+
+| Code | Reason | Description |
+|------|--------|-------------|
+| 4000 | `unauthorized` | Invalid or missing token |
+| 4001 | `container_not_found` | Container does not exist |
+| 4002 | `container_stopped` | Container is not running |
+| 4003 | `access_denied` | User does not own container |
+| 4004 | `mfa_required` | MFA verification needed |
+| 4100 | `container_restart_required` | Container restarted, reconnect needed |
+
+## Best Practices
+
+<Card title="Implement Reconnection Logic" icon="rotate">
+  WebSocket connections can drop due to network issues. Implement automatic reconnection with exponential backoff:
+  
+  ```javascript
+  function connectWithRetry(url, retries = 5, delay = 1000) {
+    const ws = new WebSocket(url);
+    
+    ws.onerror = () => {
+      if (retries > 0) {
+        setTimeout(() => {
+          connectWithRetry(url, retries - 1, delay * 2);
+        }, delay);
+      }
+    };
+    
+    return ws;
+  }
+  ```
+</Card>
+
+<Card title="Handle Resize Events" icon="arrows-maximize">
+  Always send resize messages when the terminal size changes:
+  
+  ```javascript
+  window.addEventListener('resize', () => {
+    ws.send(JSON.stringify({
+      type: 'resize',
+      cols: terminal.cols,
+      rows: terminal.rows
+    }));
+  });
+  ```
+</Card>
+
+<Card title="Use xterm.js for Frontend" icon="terminal">
+  The [xterm.js](https://xtermjs.org/) library provides a full-featured terminal emulator that works seamlessly with Rexec:
+  
+  ```javascript
+  import { Terminal } from 'xterm';
+  
+  const term = new Terminal();
+  term.open(document.getElementById('terminal'));
+  
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === 'output') {
+      term.write(msg.data);
+    }
+  };
+  
+  term.onData((data) => {
+    ws.send(JSON.stringify({ type: 'input', data }));
+  });
+  ```
+</Card>
+
+<Card title="Buffer Input During Reconnection" icon="database">
+  Queue input messages during reconnection to avoid data loss:
+  
+  ```javascript
+  const inputQueue = [];
+  let connected = false;
+  
+  ws.onopen = () => {
+    connected = true;
+    // Flush queue
+    inputQueue.forEach(msg => ws.send(msg));
+    inputQueue.length = 0;
+  };
+  
+  function sendInput(data) {
+    const msg = JSON.stringify({ type: 'input', data });
+    if (connected) {
+      ws.send(msg);
+    } else {
+      inputQueue.push(msg);
+    }
+  }
+  ```
+</Card>

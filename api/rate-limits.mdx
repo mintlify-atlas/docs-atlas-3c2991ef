@@ -1,0 +1,538 @@
+---
+title: 'Rate Limits'
+description: 'Understand API rate limits and best practices for handling them'
+---
+
+## Overview
+
+Rexec enforces rate limits to ensure fair usage and system stability. Rate limits are applied per IP address using a **token bucket algorithm** with sliding time windows.
+
+All rate limit information is included in response headers, making it easy to track your usage.
+
+## Rate Limit Tiers
+
+Different endpoint categories have different rate limits:
+
+<CardGroup cols={2}>
+  <Card title="General API" icon="bolt">
+    **500 requests** per minute
+    
+    Applies to most API endpoints like listing containers, fetching profiles, etc.
+  </Card>
+  
+  <Card title="Authentication" icon="key">
+    **60 requests** per minute
+    
+    Applies to login, OAuth, and guest authentication endpoints to prevent brute force attacks.
+  </Card>
+  
+  <Card title="Containers" icon="cube">
+    **120 operations** per minute
+    
+    Applies to container creation, deletion, start, stop operations.
+  </Card>
+  
+  <Card title="WebSockets" icon="plug">
+    **100 connections** per minute
+    
+    Applies to terminal WebSocket connections.
+  </Card>
+</CardGroup>
+
+## Rate Limit Headers
+
+Every API response includes rate limit information in the headers:
+
+```http
+X-RateLimit-Limit: 500
+X-RateLimit-Remaining: 487
+```
+
+<ParamField header="X-RateLimit-Limit" type="string">
+  Maximum number of requests allowed in the current window
+</ParamField>
+
+<ParamField header="X-RateLimit-Remaining" type="string">
+  Number of requests remaining in the current window
+</ParamField>
+
+<ParamField header="Retry-After" type="string">
+  Time to wait before making another request (only present when rate limited)
+</ParamField>
+
+## Rate Limit Response
+
+When you exceed the rate limit, you'll receive a `429 Too Many Requests` response:
+
+```json
+{
+  "error": "rate limit exceeded",
+  "retry_after": 60
+}
+```
+
+Response headers:
+```http
+HTTP/1.1 429 Too Many Requests
+X-RateLimit-Limit: 500
+X-RateLimit-Remaining: 0
+Retry-After: 1m0s
+```
+
+## Implementation Details
+
+### Token Bucket Algorithm
+
+Rexec uses a **token bucket** rate limiter with the following behavior:
+
+1. Each IP address gets a bucket with a maximum number of tokens (the rate limit)
+2. Each request consumes one token
+3. Tokens are fully replenished after the time window passes
+4. If no tokens remain, the request is rejected with `429`
+
+<Note>
+  The token bucket resets completely after the window duration, not gradually. For example, with a 500 requests/minute limit, all 500 tokens become available after 1 minute.
+</Note>
+
+### Rate Limiter Source Code
+
+From `internal/api/middleware/ratelimit.go:136-157`:
+
+```go
+// APIRateLimiter returns a rate limiter for general API requests
+// 500 requests per minute
+func APIRateLimiter() *RateLimiter {
+    return NewRateLimiter(500, 1*time.Minute)
+}
+
+// AuthRateLimiter returns a stricter rate limiter for auth endpoints
+// 60 requests per minute (prevents brute force)
+func AuthRateLimiter() *RateLimiter {
+    return NewRateLimiter(60, 1*time.Minute)
+}
+
+// WebSocketRateLimiter returns a rate limiter for WebSocket connections
+// 100 connections per minute
+func WebSocketRateLimiter() *RateLimiter {
+    return NewRateLimiter(100, 1*time.Minute)
+}
+
+// ContainerRateLimiter returns a rate limiter for container operations
+// 120 operations per minute
+func ContainerRateLimiter() *RateLimiter {
+    return NewRateLimiter(120, 1*time.Minute)
+}
+```
+
+## Handling Rate Limits
+
+### Checking Rate Limit Status
+
+Monitor the `X-RateLimit-Remaining` header to avoid hitting limits:
+
+<CodeGroup>
+```javascript JavaScript
+const response = await fetch('https://rexec.pipeops.io/api/containers', {
+  headers: { 'Authorization': `Bearer ${token}` }
+});
+
+const remaining = response.headers.get('X-RateLimit-Remaining');
+const limit = response.headers.get('X-RateLimit-Limit');
+
+console.log(`Rate limit: ${remaining}/${limit} remaining`);
+
+if (remaining < 10) {
+  console.warn('Approaching rate limit!');
+}
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    'https://rexec.pipeops.io/api/containers',
+    headers={'Authorization': f'Bearer {token}'}
+)
+
+remaining = int(response.headers.get('X-RateLimit-Remaining', 0))
+limit = int(response.headers.get('X-RateLimit-Limit', 0))
+
+print(f'Rate limit: {remaining}/{limit} remaining')
+
+if remaining < 10:
+    print('Warning: Approaching rate limit!')
+```
+
+```go Go
+resp, err := client.Get("https://rexec.pipeops.io/api/containers")
+if err != nil {
+    log.Fatal(err)
+}
+
+remaining := resp.Header.Get("X-RateLimit-Remaining")
+limit := resp.Header.Get("X-RateLimit-Limit")
+
+log.Printf("Rate limit: %s/%s remaining", remaining, limit)
+```
+</CodeGroup>
+
+### Implementing Retry Logic
+
+When you receive a `429` response, implement exponential backoff:
+
+<CodeGroup>
+```javascript JavaScript
+async function makeRequestWithRetry(url, options, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    const response = await fetch(url, options);
+    
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('Retry-After');
+      const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : Math.pow(2, i) * 1000;
+      
+      console.log(`Rate limited. Retrying in ${waitTime}ms...`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+      continue;
+    }
+    
+    return response;
+  }
+  
+  throw new Error('Max retries exceeded');
+}
+
+// Usage
+const response = await makeRequestWithRetry(
+  'https://rexec.pipeops.io/api/containers',
+  { headers: { 'Authorization': `Bearer ${token}` } }
+);
+```
+
+```python Python
+import time
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+def requests_retry_session(
+    retries=3,
+    backoff_factor=1,
+    status_forcelist=(429, 500, 502, 503, 504),
+):
+    session = requests.Session()
+    retry = Retry(
+        total=retries,
+        read=retries,
+        connect=retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=status_forcelist,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    return session
+
+# Usage
+session = requests_retry_session()
+response = session.get(
+    'https://rexec.pipeops.io/api/containers',
+    headers={'Authorization': f'Bearer {token}'}
+)
+```
+
+```go Go
+package main
+
+import (
+    "fmt"
+    "net/http"
+    "strconv"
+    "time"
+)
+
+func makeRequestWithRetry(url string, maxRetries int) (*http.Response, error) {
+    client := &http.Client{}
+    
+    for i := 0; i < maxRetries; i++ {
+        req, _ := http.NewRequest("GET", url, nil)
+        req.Header.Set("Authorization", "Bearer "+token)
+        
+        resp, err := client.Do(req)
+        if err != nil {
+            return nil, err
+        }
+        
+        if resp.StatusCode == http.StatusTooManyRequests {
+            retryAfter := resp.Header.Get("Retry-After")
+            waitTime := time.Minute
+            
+            if retryAfter != "" {
+                if seconds, err := strconv.Atoi(retryAfter); err == nil {
+                    waitTime = time.Duration(seconds) * time.Second
+                }
+            }
+            
+            fmt.Printf("Rate limited. Retrying in %v...\n", waitTime)
+            time.Sleep(waitTime)
+            continue
+        }
+        
+        return resp, nil
+    }
+    
+    return nil, fmt.Errorf("max retries exceeded")
+}
+```
+</CodeGroup>
+
+### Batching Requests
+
+Instead of making many individual requests, batch operations when possible:
+
+```javascript
+// Bad: Multiple individual requests
+for (const containerId of containerIds) {
+  await fetch(`/api/containers/${containerId}`);
+}
+
+// Good: Single request for all containers
+const containers = await fetch('/api/containers');
+const filtered = containers.filter(c => containerIds.includes(c.id));
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Monitor rate limit headers">
+    Always check `X-RateLimit-Remaining` and throttle requests when approaching the limit.
+    
+    ```javascript
+    const remaining = parseInt(response.headers.get('X-RateLimit-Remaining'));
+    if (remaining < 10) {
+      // Slow down or queue requests
+    }
+    ```
+  </Step>
+  
+  <Step title="Implement exponential backoff">
+    When receiving `429` responses, wait before retrying. Use the `Retry-After` header value.
+  </Step>
+  
+  <Step title="Cache responses">
+    Cache API responses that don't change frequently:
+    
+    ```javascript
+    const cache = new Map();
+    const CACHE_TTL = 60000; // 1 minute
+    
+    async function getCachedContainers() {
+      const cached = cache.get('containers');
+      if (cached && Date.now() - cached.time < CACHE_TTL) {
+        return cached.data;
+      }
+      
+      const data = await fetchContainers();
+      cache.set('containers', { data, time: Date.now() });
+      return data;
+    }
+    ```
+  </Step>
+  
+  <Step title="Use WebSockets for real-time updates">
+    Instead of polling, use WebSocket connections for real-time container events and terminal sessions.
+  </Step>
+  
+  <Step title="Distribute load across IP addresses">
+    For high-volume applications, distribute requests across multiple IP addresses or use a load balancer.
+  </Step>
+</Steps>
+
+## SDK Built-in Rate Limiting
+
+Official Rexec SDKs automatically handle rate limits:
+
+<CodeGroup>
+```go Go
+import rexec "github.com/PipeOpsHQ/rexec-go"
+
+client := rexec.NewClient(baseURL, token,
+    rexec.WithRateLimiter(500, time.Minute), // 500 req/min
+)
+
+// SDK automatically retries on 429
+containers, err := client.Containers.List(ctx)
+```
+
+```javascript JavaScript
+import { RexecClient } from '@pipeopshq/rexec';
+
+const client = new RexecClient({
+  baseURL,
+  token,
+  rateLimit: {
+    maxRequests: 500,
+    perMilliseconds: 60000
+  }
+});
+
+// SDK queues requests to respect rate limits
+const containers = await client.containers.list();
+```
+
+```python Python
+from rexec import RexecClient
+
+client = RexecClient(
+    base_url=base_url,
+    token=token,
+    rate_limit={
+        'max_requests': 500,
+        'window_seconds': 60
+    }
+)
+
+# SDK automatically handles 429 responses
+containers = await client.containers.list()
+```
+</CodeGroup>
+
+## Rate Limit Exemptions
+
+<Note>
+  **Enterprise tier** users can request higher rate limits. Contact support at support@pipeops.io for custom rate limit configurations.
+</Note>
+
+## Monitoring Usage
+
+Track your API usage from the dashboard:
+
+1. Go to [Settings → API Tokens](https://rexec.pipeops.io/settings/tokens)
+2. View request counts and rate limit violations per token
+3. Set up alerts for approaching rate limits
+
+## Common Patterns
+
+### Polling with Backoff
+
+```javascript
+async function pollContainerStatus(containerId, maxAttempts = 30) {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const response = await fetch(`/api/containers/${containerId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      const remaining = parseInt(response.headers.get('X-RateLimit-Remaining'));
+      
+      // Adjust polling interval based on rate limit
+      const waitTime = remaining < 50 ? 5000 : 2000;
+      
+      const container = await response.json();
+      if (container.status === 'running') {
+        return container;
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    } catch (error) {
+      if (error.status === 429) {
+        // Rate limited, wait longer
+        await new Promise(resolve => setTimeout(resolve, 60000));
+      } else {
+        throw error;
+      }
+    }
+  }
+  
+  throw new Error('Container did not start in time');
+}
+```
+
+### Request Queue
+
+```javascript
+class RateLimitedQueue {
+  constructor(maxPerMinute) {
+    this.maxPerMinute = maxPerMinute;
+    this.queue = [];
+    this.processing = false;
+  }
+  
+  async add(fn) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ fn, resolve, reject });
+      if (!this.processing) {
+        this.process();
+      }
+    });
+  }
+  
+  async process() {
+    this.processing = true;
+    
+    while (this.queue.length > 0) {
+      const { fn, resolve, reject } = this.queue.shift();
+      
+      try {
+        const result = await fn();
+        resolve(result);
+      } catch (error) {
+        reject(error);
+      }
+      
+      // Wait between requests to stay under rate limit
+      const delay = (60 * 1000) / this.maxPerMinute;
+      await new Promise(r => setTimeout(r, delay));
+    }
+    
+    this.processing = false;
+  }
+}
+
+// Usage
+const queue = new RateLimitedQueue(500); // 500 req/min
+
+for (const id of containerIds) {
+  queue.add(() => fetch(`/api/containers/${id}`));
+}
+```
+
+## Troubleshooting
+
+### Why am I being rate limited?
+
+Check if you're:
+
+- Making too many requests from the same IP
+- Not implementing retry logic with backoff
+- Polling too frequently instead of using WebSockets
+- Running multiple instances without load distribution
+
+### How do I increase my rate limit?
+
+Options:
+
+1. **Optimize your code** - Reduce unnecessary API calls
+2. **Use WebSockets** - For real-time updates instead of polling
+3. **Cache responses** - Store frequently accessed data locally
+4. **Upgrade to Enterprise** - Contact sales for custom limits
+
+### Rate limits seem inconsistent
+
+Rate limits are per-IP address. If you're behind a NAT or proxy, multiple clients may share the same IP and collectively hit the limit faster.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="SDKs" icon="code" href="/sdks/overview">
+    Use SDKs with built-in rate limiting
+  </Card>
+  <Card title="WebSockets" icon="plug" href="/api/websockets">
+    Real-time updates without polling
+  </Card>
+  <Card title="Containers API" icon="cube" href="/api/containers">
+    Explore container endpoints
+  </Card>
+  <Card title="Best Practices" icon="star" href="/guides/best-practices">
+    API optimization tips
+  </Card>
+</CardGroup>

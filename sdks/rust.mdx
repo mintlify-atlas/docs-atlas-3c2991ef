@@ -1,0 +1,655 @@
+---
+title: Rust SDK
+description: Official Rust SDK for Rexec - Build container orchestration with type-safe, async Rust
+---
+
+## Installation
+
+Add the Rexec SDK to your `Cargo.toml`:
+
+```toml
+[dependencies]
+rexec = "1.0"
+tokio = { version = "1", features = ["full"] }
+```
+
+Or use `cargo add`:
+
+```bash
+cargo add rexec
+cargo add tokio --features full
+```
+
+**Requirements:** Rust 1.70 or later
+
+## Quick Start
+
+```rust
+use rexec::{RexecClient, CreateContainerRequest};
+
+#[tokio::main]
+async fn main() -> Result<(), rexec::Error> {
+    // Create client
+    let client = RexecClient::new(
+        "https://your-instance.com",
+        "your-api-token"
+    );
+
+    // Create a container
+    let container = client.containers()
+        .create(CreateContainerRequest::new("ubuntu:24.04")
+            .name("my-sandbox"))
+        .await?;
+
+    println!("Created container: {}", container.id);
+
+    // Connect to terminal
+    let mut term = client.terminal().connect(&container.id).await?;
+    term.write(b"echo hello\n").await?;
+
+    // Clean up
+    client.containers().delete(&container.id).await?;
+
+    Ok(())
+}
+```
+
+## Client Initialization
+
+### Basic Client Creation
+
+```rust
+use rexec::RexecClient;
+
+let client = RexecClient::new(
+    "https://your-rexec-instance.com",
+    "your-api-token"
+);
+```
+
+### With Custom Configuration
+
+```rust
+use rexec::{RexecClient, ClientConfig};
+
+let config = ClientConfig::new(
+    "https://your-instance.com",
+    "your-token"
+)
+.timeout(60); // 60 second timeout
+
+let client = RexecClient::with_config(config);
+```
+
+### Client is Clone-able
+
+The client can be cloned cheaply and shared across threads:
+
+```rust
+let client = RexecClient::new(base_url, token);
+let client2 = client.clone(); // Cheap Arc clone
+
+tokio::spawn(async move {
+    let containers = client2.containers().list().await?;
+    Ok::<_, rexec::Error>(())
+});
+```
+
+## Container Operations
+
+The `ContainerService` provides methods for managing sandboxed environments.
+
+### Create Container
+
+<CodeGroup>
+```rust Basic
+let container = client.containers()
+    .create(CreateContainerRequest::new("ubuntu:24.04"))
+    .await?;
+```
+
+```rust With Options
+use std::collections::HashMap;
+
+let mut env = HashMap::new();
+env.insert("MY_VAR".to_string(), "value".to_string());
+
+let mut labels = HashMap::new();
+labels.insert("project".to_string(), "demo".to_string());
+
+let container = client.containers()
+    .create(CreateContainerRequest::new("ubuntu:24.04")
+        .name("my-sandbox")
+        .env("NODE_ENV", "production")
+        .label("owner", "engineering"))
+    .await?;
+```
+
+```rust Builder Pattern
+let container = client.containers()
+    .create(
+        CreateContainerRequest::new("python:3.12")
+            .name("ml-worker")
+            .env("PYTHONPATH", "/app")
+            .env("CUDA_VISIBLE_DEVICES", "0")
+            .label("type", "ml")
+            .label("gpu", "true")
+    )
+    .await?;
+```
+</CodeGroup>
+
+### List Containers
+
+```rust
+let containers = client.containers().list().await?;
+
+for c in containers {
+    println!("{}: {} (status: {})", c.id, c.name, c.status);
+}
+```
+
+### Get Container
+
+```rust
+match client.containers().get(&container_id).await {
+    Ok(container) => {
+        println!("Container: {}", container.name);
+        println!("Status: {}", container.status);
+        println!("Created: {}", container.created_at);
+    }
+    Err(rexec::Error::Api { status, message }) => {
+        eprintln!("API Error {}: {}", status, message);
+    }
+    Err(e) => eprintln!("Error: {}", e),
+}
+```
+
+### Lifecycle Management
+
+<CodeGroup>
+```rust Start
+client.containers().start(&container_id).await?;
+println!("Container started");
+```
+
+```rust Stop
+client.containers().stop(&container_id).await?;
+println!("Container stopped");
+```
+
+```rust Delete
+client.containers().delete(&container_id).await?;
+println!("Container deleted");
+```
+</CodeGroup>
+
+## File Operations
+
+The `FileService` enables file management within containers.
+
+### List Files
+
+```rust
+let files = client.files().list(&container_id, "/home").await?;
+
+for f in files {
+    let icon = if f.is_dir { "📁" } else { "📄" };
+    println!("{} {} ({} bytes)", icon, f.name, f.size);
+}
+```
+
+### Download Files
+
+```rust
+use std::fs::File;
+use std::io::Write;
+
+// Download as bytes
+let data = client.files().download(&container_id, "/etc/passwd").await?;
+println!("File contents:\n{}", String::from_utf8_lossy(&data));
+
+// Save to local file
+let mut file = File::create("passwd.txt")?;
+file.write_all(&data)?;
+```
+
+### Create Directory
+
+```rust
+client.files().mkdir(&container_id, "/home/mydir").await?;
+println!("Directory created");
+```
+
+## Terminal Connections
+
+The `TerminalService` provides WebSocket-based terminal access with full PTY support.
+
+### Connect to Terminal
+
+```rust
+let mut term = client.terminal()
+    .connect(&container_id)
+    .await?;
+```
+
+### Send Commands
+
+```rust
+// Send a simple command
+term.write(b"ls -la\n").await?;
+
+// Send multiple commands
+let commands = vec![
+    b"cd /app\n",
+    b"cargo build --release\n",
+    b"cargo run\n",
+];
+
+for cmd in commands {
+    term.write(cmd).await?;
+}
+```
+
+### Read Output
+
+```rust
+use tokio::io::AsyncReadExt;
+
+// Read once
+let mut buffer = vec![0u8; 4096];
+let n = term.read(&mut buffer).await?;
+let output = String::from_utf8_lossy(&buffer[..n]);
+println!("{}", output);
+
+// Read continuously
+loop {
+    let mut buffer = vec![0u8; 4096];
+    match term.read(&mut buffer).await {
+        Ok(0) => break, // EOF
+        Ok(n) => {
+            let output = String::from_utf8_lossy(&buffer[..n]);
+            print!("{}", output);
+        }
+        Err(e) => {
+            eprintln!("Error reading: {}", e);
+            break;
+        }
+    }
+}
+```
+
+### Resize Terminal
+
+```rust
+term.resize(120, 40).await?;
+```
+
+## Error Handling
+
+The SDK provides a comprehensive error type:
+
+```rust
+use rexec::Error;
+
+match client.containers().get("invalid-id").await {
+    Ok(container) => println!("Got: {}", container.id),
+    Err(Error::Api { status, message }) => {
+        match status {
+            404 => println!("Container not found"),
+            401 => println!("Authentication failed"),
+            _ => eprintln!("API Error {}: {}", status, message),
+        }
+    }
+    Err(Error::Http(e)) => eprintln!("HTTP error: {}", e),
+    Err(Error::Json(e)) => eprintln!("JSON error: {}", e),
+    Err(Error::WebSocket(e)) => eprintln!("WebSocket error: {}", e),
+    Err(e) => eprintln!("Error: {}", e),
+}
+```
+
+## Complete Examples
+
+### CI/CD Test Runner
+
+```rust
+use rexec::{RexecClient, CreateContainerRequest};
+use std::env;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = RexecClient::new(
+        env::var("REXEC_URL")?,
+        env::var("REXEC_TOKEN")?
+    );
+
+    // Create test container
+    let container = client.containers()
+        .create(CreateContainerRequest::new("rust:1.75")
+            .env("CI", "true"))
+        .await?;
+
+    // Start container
+    client.containers().start(&container.id).await?;
+
+    // Connect to terminal
+    let mut term = client.terminal().connect(&container.id).await?;
+
+    // Run tests
+    term.write(b"cargo test --release\n").await?;
+
+    // Capture output
+    let mut buffer = vec![0u8; 4096];
+    loop {
+        match term.read(&mut buffer).await {
+            Ok(0) => break,
+            Ok(n) => print!("{}", String::from_utf8_lossy(&buffer[..n])),
+            Err(_) => break,
+        }
+    }
+
+    // Clean up
+    client.containers().delete(&container.id).await?;
+
+    Ok(())
+}
+```
+
+### Parallel Test Execution
+
+```rust
+use rexec::{RexecClient, CreateContainerRequest};
+use std::sync::Arc;
+
+#[derive(Clone)]
+struct TestCase {
+    name: String,
+    image: String,
+    command: String,
+}
+
+struct TestResult {
+    name: String,
+    passed: bool,
+}
+
+async fn run_test(
+    client: Arc<RexecClient>,
+    test: TestCase
+) -> Result<TestResult, rexec::Error> {
+    let container = client.containers()
+        .create(CreateContainerRequest::new(&test.image))
+        .await?;
+
+    client.containers().start(&container.id).await?;
+
+    let mut term = client.terminal().connect(&container.id).await?;
+    term.write(test.command.as_bytes()).await?;
+
+    // Wait for command to complete and check exit code
+    let mut buffer = vec![0u8; 4096];
+    let _output = term.read(&mut buffer).await?;
+
+    client.containers().delete(&container.id).await?;
+
+    Ok(TestResult {
+        name: test.name,
+        passed: true, // Check actual result
+    })
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Arc::new(RexecClient::new(
+        std::env::var("REXEC_URL")?,
+        std::env::var("REXEC_TOKEN")?
+    ));
+
+    let test_cases = vec![
+        TestCase {
+            name: "unit-tests".to_string(),
+            image: "rust:1.75".to_string(),
+            command: "cargo test --lib\n".to_string(),
+        },
+        TestCase {
+            name: "integration-tests".to_string(),
+            image: "rust:1.75".to_string(),
+            command: "cargo test --test '*'\n".to_string(),
+        },
+    ];
+
+    let handles: Vec<_> = test_cases.into_iter().map(|tc| {
+        let client = Arc::clone(&client);
+        tokio::spawn(run_test(client, tc))
+    }).collect();
+
+    let results = futures::future::join_all(handles).await;
+
+    for result in results {
+        match result {
+            Ok(Ok(test_result)) => {
+                println!("✓ {} passed", test_result.name);
+            }
+            Ok(Err(e)) => eprintln!("✗ Test failed: {}", e),
+            Err(e) => eprintln!("✗ Task panicked: {}", e),
+        }
+    }
+
+    Ok(())
+}
+```
+
+### Remote Build Service
+
+```rust
+use rexec::{RexecClient, CreateContainerRequest};
+use std::fs;
+
+async fn build_project(
+    client: &RexecClient,
+    project_path: &str,
+    build_image: &str
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    // Create build container
+    let container = client.containers()
+        .create(CreateContainerRequest::new(build_image)
+            .name("builder")
+            .label("type", "build"))
+        .await?;
+
+    client.containers().start(&container.id).await?;
+
+    // Upload source files
+    let source = fs::read(project_path)?;
+    client.files().upload(&container.id, "/workspace/src.tar", &source).await?;
+
+    // Run build
+    let mut term = client.terminal().connect(&container.id).await?;
+    term.write(b"cd /workspace && tar xf src.tar && make\n").await?;
+
+    // Wait for build to complete
+    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+
+    // Download artifact
+    let artifact = client.files()
+        .download(&container.id, "/workspace/build/output")
+        .await?;
+
+    // Clean up
+    client.containers().delete(&container.id).await?;
+
+    Ok(artifact)
+}
+```
+
+### Database Migration Testing
+
+```rust
+use rexec::{RexecClient, CreateContainerRequest};
+
+#[tokio::test]
+async fn test_database_migrations() -> Result<(), Box<dyn std::error::Error>> {
+    let client = RexecClient::new(
+        std::env::var("REXEC_URL")?,
+        std::env::var("REXEC_TOKEN")?
+    );
+
+    let container = client.containers()
+        .create(CreateContainerRequest::new("postgres:16")
+            .env("POSTGRES_PASSWORD", "test"))
+        .await?;
+
+    client.containers().start(&container.id).await?;
+
+    // Wait for postgres to be ready
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+    // Connect and run migration
+    let mut term = client.terminal().connect(&container.id).await?;
+    term.write(b"psql -U postgres -c 'CREATE DATABASE testdb;'\n").await?;
+
+    let mut buffer = vec![0u8; 4096];
+    let n = term.read(&mut buffer).await?;
+    let output = String::from_utf8_lossy(&buffer[..n]);
+
+    assert!(output.contains("CREATE DATABASE"));
+
+    client.containers().delete(&container.id).await?;
+
+    Ok(())
+}
+```
+
+## API Reference
+
+### RexecClient
+
+```rust
+pub struct RexecClient { /* fields omitted */ }
+
+impl RexecClient {
+    pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self
+    pub fn with_config(config: ClientConfig) -> Self
+    
+    pub fn containers(&self) -> ContainerService
+    pub fn files(&self) -> FileService
+    pub fn terminal(&self) -> TerminalService
+}
+
+impl Clone for RexecClient
+```
+
+### Types
+
+<ParamField path="Container" type="struct">
+  Container instance.
+  
+  <ParamField path="id" type="String">Container ID</ParamField>
+  <ParamField path="name" type="String">Container name</ParamField>
+  <ParamField path="image" type="String">Docker image</ParamField>
+  <ParamField path="status" type="String">Current status</ParamField>
+  <ParamField path="created_at" type="String">Creation timestamp</ParamField>
+  <ParamField path="started_at" type="Option<String>">Start timestamp</ParamField>
+  <ParamField path="labels" type="HashMap<String, String>">Container labels</ParamField>
+  <ParamField path="environment" type="HashMap<String, String>">Environment variables</ParamField>
+</ParamField>
+
+<ParamField path="CreateContainerRequest" type="struct">
+  Container creation request.
+  
+  <ParamField path="image" type="String" required>Docker image to use</ParamField>
+  <ParamField path="name" type="Option<String>">Optional container name</ParamField>
+  <ParamField path="environment" type="HashMap<String, String>">Environment variables</ParamField>
+  <ParamField path="labels" type="HashMap<String, String>">Container labels</ParamField>
+</ParamField>
+
+<ParamField path="FileInfo" type="struct">
+  File metadata.
+  
+  <ParamField path="name" type="String">File name</ParamField>
+  <ParamField path="path" type="String">Full path</ParamField>
+  <ParamField path="size" type="u64">File size in bytes</ParamField>
+  <ParamField path="mode" type="String">File permissions</ParamField>
+  <ParamField path="mod_time" type="String">Last modification time</ParamField>
+  <ParamField path="is_dir" type="bool">Whether this is a directory</ParamField>
+</ParamField>
+
+<ParamField path="Error" type="enum">
+  SDK error type.
+  
+  - `Api { status: u16, message: String }` - API error
+  - `Http(reqwest::Error)` - HTTP client error
+  - `Json(serde_json::Error)` - JSON parsing error
+  - `WebSocket(tokio_tungstenite::tungstenite::Error)` - WebSocket error
+  - `Url(url::ParseError)` - URL parsing error
+  - Other variants for connection and encoding errors
+</ParamField>
+
+### Services
+
+**ContainerService** - Access via `client.containers()`
+- `async fn list(&self) -> Result<Vec<Container>>` - List all containers
+- `async fn get(&self, id: &str) -> Result<Container>` - Get container by ID
+- `async fn create(&self, request: CreateContainerRequest) -> Result<Container>` - Create a container
+- `async fn delete(&self, id: &str) -> Result<()>` - Delete a container
+- `async fn start(&self, id: &str) -> Result<()>` - Start a container
+- `async fn stop(&self, id: &str) -> Result<()>` - Stop a container
+
+**FileService** - Access via `client.files()`
+- `async fn list(&self, container_id: &str, path: &str) -> Result<Vec<FileInfo>>` - List files
+- `async fn download(&self, container_id: &str, path: &str) -> Result<Vec<u8>>` - Download a file
+- `async fn mkdir(&self, container_id: &str, path: &str) -> Result<()>` - Create directory
+
+**TerminalService** - Access via `client.terminal()`
+- `async fn connect(&self, container_id: &str) -> Result<Terminal>` - Connect to terminal
+
+**Terminal** implements `AsyncRead` and `AsyncWrite`:
+- `async fn write(&mut self, data: &[u8]) -> Result<()>` - Send data to terminal
+- `async fn read(&mut self, buf: &mut [u8]) -> Result<usize>` - Read output
+- `async fn resize(&mut self, cols: u16, rows: u16) -> Result<()>` - Resize terminal
+
+## Best Practices
+
+<Note>
+**Clone Clients** - The client is cheap to clone and can be shared across threads:
+```rust
+let client2 = client.clone();
+```
+</Note>
+
+<Note>
+**Use Result Propagation** - Use `?` operator for clean error handling:
+```rust
+let container = client.containers().create(req).await?;
+```
+</Note>
+
+<Note>
+**Clean Up Resources** - Always delete containers when done:
+```rust
+let container = client.containers().create(req).await?;
+// Use container
+client.containers().delete(&container.id).await?;
+```
+</Note>
+
+<Note>
+**Leverage Type Safety** - The SDK is fully typed for compile-time safety.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Ruby SDK" icon="gem" href="/sdks/ruby">
+    Explore the Ruby SDK
+  </Card>
+  <Card title="Go SDK" icon="golang" href="/sdks/go">
+    Check out the Go SDK
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    View complete API documentation
+  </Card>
+  <Card title="Examples" icon="code" href="/examples">
+    Browse more code examples
+  </Card>
+</CardGroup>

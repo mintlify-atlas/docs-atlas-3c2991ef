@@ -1,0 +1,641 @@
+---
+title: File Operations
+description: Learn how to upload, download, and manage files in Rexec containers
+---
+
+## Overview
+
+Rexec provides a complete file management API for working with files inside containers. You can upload files, download files, list directories, and create directories - all through REST API endpoints.
+
+---
+
+## Uploading Files
+
+Upload files to your container using multipart form data.
+
+### Basic Upload
+
+```bash
+curl -X POST "https://rexec.pipeops.io/api/containers/<container-id>/files?path=/home/user/" \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@myfile.txt"
+```
+
+Response:
+```json
+{
+  "message": "file uploaded successfully",
+  "filename": "myfile.txt",
+  "path": "/home/user/myfile.txt",
+  "size": 1024
+}
+```
+
+### Upload to Custom Path
+
+```bash
+curl -X POST "https://rexec.pipeops.io/api/containers/<container-id>/files?path=/home/user/projects/" \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@app.py"
+```
+
+### Upload Implementation
+
+Here's how the upload endpoint works internally:
+
+```go
+func (h *FileHandler) Upload(c *gin.Context) {
+    userID := c.GetString("userID")
+    dockerID := c.Param("id")
+    destPath := c.Query("path")
+
+    // Get uploaded file
+    file, header, err := c.Request.FormFile("file")
+    if err != nil {
+        return error("no file uploaded")
+    }
+    defer file.Close()
+
+    // Validate file size (max 100MB)
+    if header.Size > 100*1024*1024 {
+        return error("file too large (max 100MB)")
+    }
+
+    // Stream tar archive to avoid buffering large files
+    pr, pw := io.Pipe()
+    tw := tar.NewWriter(pw)
+
+    go func() {
+        defer pw.Close()
+        defer tw.Close()
+
+        hdr := &tar.Header{
+            Name:    filename,
+            Mode:    0644,
+            Size:    header.Size,
+            ModTime: time.Now(),
+        }
+
+        tw.WriteHeader(hdr)
+        io.Copy(tw, io.LimitReader(file, header.Size))
+    }()
+
+    // Copy to container
+    client.CopyToContainer(ctx, dockerID, destPath, pr, container.CopyToContainerOptions{})
+}
+```
+
+<Note>
+  Files are streamed using tar format to avoid buffering large files in memory. The maximum file size is 100MB per upload.
+</Note>
+
+### Security Considerations
+
+- **Filename sanitization**: Filenames are sanitized using `filepath.Base()` to prevent directory traversal
+- **Size limits**: 100MB maximum file size
+- **Path validation**: Cannot upload to system paths like `/bin`, `/etc`, `/usr`
+
+---
+
+## Downloading Files
+
+Download files from your container.
+
+### Basic Download
+
+```bash
+curl "https://rexec.pipeops.io/api/containers/<container-id>/files?path=/home/user/myfile.txt" \
+  -H "Authorization: Bearer <token>" \
+  -o myfile.txt
+```
+
+### Download with Custom Filename
+
+```bash
+curl "https://rexec.pipeops.io/api/containers/<container-id>/files?path=/home/user/data.json" \
+  -H "Authorization: Bearer <token>" \
+  -o local-data.json
+```
+
+### Download Implementation
+
+The download endpoint extracts files from Docker's tar stream:
+
+```go
+func (h *FileHandler) Download(c *gin.Context) {
+    dockerID := c.Param("id")
+    filePath := c.Query("path")
+
+    // Copy from container
+    reader, stat, err := client.CopyFromContainer(ctx, dockerID, filePath)
+    if err != nil {
+        return error("file not found")
+    }
+    defer reader.Close()
+
+    // Read tar archive
+    tr := tar.NewReader(reader)
+    header, err := tr.Next()
+    if err != nil {
+        return error("failed to read archive")
+    }
+
+    // Check if directory
+    if header.Typeflag == tar.TypeDir {
+        return error("path is a directory, use /files/list")
+    }
+
+    // Stream file to client
+    filename := filepath.Base(filePath)
+    c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+    c.Header("Content-Type", "application/octet-stream")
+    c.Header("Content-Length", fmt.Sprintf("%d", header.Size))
+    io.Copy(c.Writer, tr)
+}
+```
+
+<Warning>
+  You cannot download directories directly. Use the list endpoint to see directory contents, then download individual files.
+</Warning>
+
+---
+
+## Listing Files
+
+List files and directories in a container path.
+
+### List Directory Contents
+
+```bash
+curl "https://rexec.pipeops.io/api/containers/<container-id>/files/list?path=/home/user/" \
+  -H "Authorization: Bearer <token>"
+```
+
+Response:
+```json
+{
+  "path": "/home/user/",
+  "files": [
+    {
+      "name": "myfile.txt",
+      "path": "/home/user/myfile.txt",
+      "size": 1024,
+      "mode": "-rw-r--r--",
+      "mod_time": "2024-01-15T12:30:00Z",
+      "is_dir": false
+    },
+    {
+      "name": "projects",
+      "path": "/home/user/projects",
+      "size": 4096,
+      "mode": "drwxr-xr-x",
+      "mod_time": "2024-01-15T10:00:00Z",
+      "is_dir": true
+    }
+  ],
+  "count": 2
+}
+```
+
+### List Nested Directory
+
+```bash
+curl "https://rexec.pipeops.io/api/containers/<container-id>/files/list?path=/home/user/projects/" \
+  -H "Authorization: Bearer <token>"
+```
+
+### List Implementation
+
+The list endpoint executes `ls -la` inside the container:
+
+```go
+func (h *FileHandler) List(c *gin.Context) {
+    dockerID := c.Param("id")
+    dirPath := c.Query("path")
+
+    // Use exec to run ls command
+    execConfig := container.ExecOptions{
+        Cmd:          []string{"ls", "-la", dirPath},
+        AttachStdout: true,
+        AttachStderr: true,
+    }
+
+    execResp, _ := client.ContainerExecCreate(ctx, dockerID, execConfig)
+    attachResp, _ := client.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+    defer attachResp.Close()
+
+    // Read output
+    output, _ := io.ReadAll(attachResp.Reader)
+
+    // Parse ls output
+    files := parseListOutput(string(output), dirPath)
+
+    c.JSON(http.StatusOK, gin.H{
+        "path":  dirPath,
+        "files": files,
+        "count": len(files),
+    })
+}
+```
+
+### Parsing ls Output
+
+The parser handles both GNU ls and BusyBox ls formats:
+
+```go
+func parseListOutput(output, basePath string) []FileInfo {
+    lines := strings.Split(output, "\n")
+    var files []FileInfo
+
+    for _, line := range lines {
+        line = strings.TrimSpace(line)
+        if line == "" || strings.HasPrefix(line, "total") {
+            continue
+        }
+
+        // Parse ls -la output
+        // Format: -rw-r--r-- 1 user user 1234 Jan  1 12:00 filename
+        fields := strings.Fields(line)
+        if len(fields) < 8 {
+            continue
+        }
+
+        mode := fields[0]
+        size, _ := strconv.ParseInt(fields[4], 10, 64)
+        name := strings.Join(fields[8:], " ")
+
+        if name == "." || name == ".." {
+            continue
+        }
+
+        files = append(files, FileInfo{
+            Name:    name,
+            Path:    filepath.Join(basePath, name),
+            Size:    size,
+            Mode:    mode,
+            IsDir:   mode[0] == 'd',
+        })
+    }
+
+    return files
+}
+```
+
+---
+
+## Creating Directories
+
+Create directories in your container.
+
+### Create Directory
+
+```bash
+curl -X POST "https://rexec.pipeops.io/api/containers/<container-id>/files/mkdir?path=/home/user/projects/myapp" \
+  -H "Authorization: Bearer <token>"
+```
+
+Response:
+```json
+{
+  "message": "directory created successfully",
+  "path": "/home/user/projects/myapp"
+}
+```
+
+### Create Nested Directories
+
+The `mkdir -p` flag creates parent directories automatically:
+
+```bash
+curl -X POST "https://rexec.pipeops.io/api/containers/<container-id>/files/mkdir?path=/home/user/a/b/c" \
+  -H "Authorization: Bearer <token>"
+```
+
+### Mkdir Implementation
+
+```go
+func (h *FileHandler) Mkdir(c *gin.Context) {
+    dockerID := c.Param("id")
+    dirPath := c.Query("path")
+
+    // Use exec to run mkdir command
+    execConfig := container.ExecOptions{
+        Cmd:          []string{"mkdir", "-p", dirPath},
+        AttachStdout: true,
+        AttachStderr: true,
+    }
+
+    execResp, _ := client.ContainerExecCreate(ctx, dockerID, execConfig)
+    attachResp, _ := client.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+    defer attachResp.Close()
+
+    // Wait for completion
+    io.Copy(io.Discard, attachResp.Reader)
+
+    // Check exit code
+    inspect, _ := client.ContainerExecInspect(ctx, execResp.ID)
+    if inspect.ExitCode != 0 {
+        return error("failed to create directory")
+    }
+
+    c.JSON(http.StatusOK, gin.H{
+        "message": "directory created successfully",
+        "path":    dirPath,
+    })
+}
+```
+
+---
+
+## Deleting Files
+
+Delete files and directories from your container.
+
+### Delete File
+
+```bash
+curl -X DELETE "https://rexec.pipeops.io/api/containers/<container-id>/files?path=/home/user/oldfile.txt" \
+  -H "Authorization: Bearer <token>"
+```
+
+Response:
+```json
+{
+  "message": "file deleted successfully",
+  "path": "/home/user/oldfile.txt"
+}
+```
+
+### Delete Directory
+
+Directories are deleted recursively:
+
+```bash
+curl -X DELETE "https://rexec.pipeops.io/api/containers/<container-id>/files?path=/home/user/old-project" \
+  -H "Authorization: Bearer <token>"
+```
+
+### Delete Implementation
+
+The delete endpoint uses `rm -rf` for recursive deletion:
+
+```go
+func (h *FileHandler) Delete(c *gin.Context) {
+    dockerID := c.Param("id")
+    filePath := c.Query("path")
+
+    // Safety check - don't allow deleting system paths
+    dangerousPaths := []string{"/", "/bin", "/sbin", "/usr", "/etc", "/var", "/lib", "/root"}
+    for _, dangerous := range dangerousPaths {
+        if filePath == dangerous || strings.HasPrefix(filePath, dangerous+"/") && !strings.HasPrefix(filePath, "/home/") {
+            return error("cannot delete system files")
+        }
+    }
+
+    // Use exec to run rm command
+    execConfig := container.ExecOptions{
+        Cmd:          []string{"rm", "-rf", filePath},
+        AttachStdout: true,
+        AttachStderr: true,
+    }
+
+    execResp, _ := client.ContainerExecCreate(ctx, dockerID, execConfig)
+    attachResp, _ := client.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+    defer attachResp.Close()
+
+    io.Copy(io.Discard, attachResp.Reader)
+
+    // Check exit code
+    inspect, _ := client.ContainerExecInspect(ctx, execResp.ID)
+    if inspect.ExitCode != 0 {
+        return error("failed to delete file")
+    }
+}
+```
+
+<Warning>
+  File deletion is permanent and cannot be undone. System paths (`/bin`, `/etc`, `/usr`, etc.) are protected and cannot be deleted.
+</Warning>
+
+---
+
+## SDK Examples
+
+Use Rexec SDKs for easier file operations:
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```javascript
+    import { RexecClient } from '@pipeopshq/rexec';
+
+    const client = new RexecClient({
+      baseURL: process.env.REXEC_URL,
+      token: process.env.REXEC_TOKEN,
+    });
+
+    // Upload file
+    await client.files.upload(
+      containerId,
+      '/home/user/',
+      new File(['Hello World'], 'hello.txt')
+    );
+
+    // Download file
+    const content = await client.files.download(
+      containerId,
+      '/home/user/hello.txt'
+    );
+
+    // List files
+    const files = await client.files.list(containerId, '/home/user/');
+    console.log(files);
+
+    // Create directory
+    await client.files.mkdir(containerId, '/home/user/projects');
+
+    // Delete file
+    await client.files.delete(containerId, '/home/user/hello.txt');
+    ```
+  </Tab>
+
+  <Tab title="Python">
+    ```python
+    from rexec import RexecClient
+    import asyncio
+
+    async def main():
+        async with RexecClient(
+            base_url=os.environ["REXEC_URL"],
+            token=os.environ["REXEC_TOKEN"]
+        ) as client:
+            # Upload file
+            await client.files.upload(
+                container_id,
+                "/home/user/",
+                "hello.txt",
+                b"Hello World"
+            )
+
+            # Download file
+            content = await client.files.download(
+                container_id,
+                "/home/user/hello.txt"
+            )
+            print(content)
+
+            # List files
+            files = await client.files.list(container_id, "/home/user/")
+            for file in files:
+                print(f"{file.name} - {file.size} bytes")
+
+            # Create directory
+            await client.files.mkdir(container_id, "/home/user/projects")
+
+            # Delete file
+            await client.files.delete(container_id, "/home/user/hello.txt")
+
+    asyncio.run(main())
+    ```
+  </Tab>
+
+  <Tab title="Go">
+    ```go
+    package main
+
+    import (
+        "context"
+        "fmt"
+        "os"
+        rexec "github.com/PipeOpsHQ/rexec-go"
+    )
+
+    func main() {
+        client := rexec.NewClient(
+            os.Getenv("REXEC_URL"),
+            os.Getenv("REXEC_TOKEN"),
+        )
+
+        ctx := context.Background()
+
+        // Upload file
+        err := client.Files.Upload(ctx, containerID, "/home/user/", "hello.txt", []byte("Hello World"))
+        if err != nil {
+            panic(err)
+        }
+
+        // Download file
+        content, err := client.Files.Download(ctx, containerID, "/home/user/hello.txt")
+        if err != nil {
+            panic(err)
+        }
+        fmt.Println(string(content))
+
+        // List files
+        files, err := client.Files.List(ctx, containerID, "/home/user/")
+        if err != nil {
+            panic(err)
+        }
+        for _, file := range files {
+            fmt.Printf("%s - %d bytes\n", file.Name, file.Size)
+        }
+
+        // Create directory
+        err = client.Files.Mkdir(ctx, containerID, "/home/user/projects")
+        if err != nil {
+            panic(err)
+        }
+
+        // Delete file
+        err = client.Files.Delete(ctx, containerID, "/home/user/hello.txt")
+        if err != nil {
+            panic(err)
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Bulk Operations
+
+### Upload Multiple Files
+
+Upload multiple files in parallel:
+
+```javascript
+const files = [
+  { path: '/home/user/file1.txt', content: 'Content 1' },
+  { path: '/home/user/file2.txt', content: 'Content 2' },
+  { path: '/home/user/file3.txt', content: 'Content 3' },
+];
+
+await Promise.all(
+  files.map(({ path, content }) =>
+    client.files.upload(
+      containerId,
+      path,
+      new File([content], path.split('/').pop())
+    )
+  )
+);
+```
+
+### Download Multiple Files
+
+```javascript
+const filePaths = [
+  '/home/user/file1.txt',
+  '/home/user/file2.txt',
+  '/home/user/file3.txt',
+];
+
+const contents = await Promise.all(
+  filePaths.map((path) => client.files.download(containerId, path))
+);
+```
+
+---
+
+## File Transfer Best Practices
+
+<Note>
+  Follow these best practices for efficient file operations:
+</Note>
+
+1. **Batch operations** - Upload/download multiple files in parallel
+2. **Compress large files** - Use gzip or tar before uploading
+3. **Stream large files** - Use streaming APIs for files > 10MB
+4. **Check file size** - Validate file size before upload (max 100MB)
+5. **Handle errors** - Implement retry logic for network failures
+6. **Clean up** - Delete temporary files after processing
+
+---
+
+## Limits and Quotas
+
+| Limit | Value |
+|-------|-------|
+| Max file size | 100MB per upload |
+| Max files per container | Limited by disk quota |
+| API rate limit | 100 requests/minute |
+| Concurrent uploads | 5 per container |
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Terminal Access" icon="terminal" href="/guides/embedding">
+    Connect to containers via web terminal
+  </Card>
+  <Card title="Container Management" icon="box" href="/guides/container-management">
+    Learn how to manage containers
+  </Card>
+  <Card title="SDK Reference" icon="code" href="/sdk/overview">
+    Use SDKs for file operations
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference/files">
+    Complete file API documentation
+  </Card>
+</CardGroup>

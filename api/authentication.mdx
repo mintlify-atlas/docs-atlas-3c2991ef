@@ -1,0 +1,436 @@
+---
+title: 'Authentication'
+description: 'Authenticate API requests using JWT tokens or API keys'
+---
+
+## Overview
+
+Rexec supports two authentication methods:
+
+1. **JWT Tokens** - Time-limited tokens issued after OAuth login or guest authentication
+2. **API Tokens** - Long-lived tokens for programmatic access (format: `rexec_...`)
+
+All authenticated requests must include an `Authorization` header with a Bearer token.
+
+## JWT Authentication
+
+### OAuth Flow with PipeOps
+
+The recommended authentication method for production use is OAuth with PipeOps:
+
+<Steps>
+  <Step title="Get authorization URL">
+    Request the OAuth authorization URL with PKCE:
+    
+    ```bash
+    curl https://rexec.pipeops.io/api/auth/oauth/url \
+      -H "Origin: https://your-app.com"
+    ```
+    
+    Response:
+    ```json
+    {
+      "auth_url": "https://auth.pipeops.io/oauth/authorize?...",
+      "state": "random-state-value"
+    }
+    ```
+  </Step>
+  
+  <Step title="Redirect user to authorization URL">
+    Open the `auth_url` in a browser or popup window. The user will authenticate with PipeOps.
+  </Step>
+  
+  <Step title="Handle callback">
+    After authentication, PipeOps redirects to `/api/auth/callback` with a code. The callback page will:
+    - Exchange the code for a JWT token
+    - Post the token to your application via `postMessage`
+    - Store the token in localStorage
+  </Step>
+  
+  <Step title="Use the JWT token">
+    Include the token in all API requests:
+    
+    ```bash
+    curl https://rexec.pipeops.io/api/containers \
+      -H "Authorization: Bearer YOUR_JWT_TOKEN"
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  The OAuth flow uses **PKCE (Proof Key for Code Exchange)** for enhanced security. State tokens are stored in secure, HTTP-only cookies with a 15-minute expiration.
+</Note>
+
+### JWT Token Structure
+
+JWT tokens are signed using **HS256** (HMAC-SHA256) and contain the following claims:
+
+```json
+{
+  "user_id": "abc123-def456",
+  "email": "user@example.com",
+  "username": "johndoe",
+  "tier": "free",
+  "subscription_active": false,
+  "guest": false,
+  "sid": "session-id",
+  "iat": 1705315200,
+  "exp": 1713091200
+}
+```
+
+<ParamField path="user_id" type="string" required>
+  Unique user identifier
+</ParamField>
+
+<ParamField path="email" type="string" required>
+  User's email address
+</ParamField>
+
+<ParamField path="username" type="string" required>
+  Display username
+</ParamField>
+
+<ParamField path="tier" type="string" required>
+  User tier: `guest`, `free`, `pro`, or `enterprise`
+</ParamField>
+
+<ParamField path="subscription_active" type="boolean" required>
+  Whether user has an active PipeOps subscription
+</ParamField>
+
+<ParamField path="guest" type="boolean" required>
+  Whether this is a guest session
+</ParamField>
+
+<ParamField path="sid" type="string">
+  Session ID for session tracking and revocation
+</ParamField>
+
+<ParamField path="iat" type="number" required>
+  Issued at timestamp (Unix epoch)
+</ParamField>
+
+<ParamField path="exp" type="number" required>
+  Expiration timestamp (Unix epoch)
+</ParamField>
+
+### Guest Authentication
+
+For testing or temporary access, use guest authentication:
+
+```bash
+curl -X POST https://rexec.pipeops.io/api/auth/guest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "demo-user",
+    "email": "demo@example.com"
+  }'
+```
+
+Response:
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "user": {
+    "id": "guest-123",
+    "email": "demo@example.com",
+    "username": "demo-user",
+    "tier": "guest"
+  },
+  "guest": true,
+  "expires_in": 180000,
+  "message": "Guest session active for 50 hours"
+}
+```
+
+<Warning>
+  Guest sessions are limited to **50 hours** and have restricted container limits. For production use, authenticate with PipeOps OAuth.
+</Warning>
+
+### Returning Guests
+
+If you provide an email for guest login and that email already exists as a guest, you'll receive the existing guest session:
+
+```json
+{
+  "token": "...",
+  "returning_guest": true,
+  "message": "Welcome back! Your previous session has been restored."
+}
+```
+
+## API Token Authentication
+
+API tokens are long-lived tokens ideal for server-to-server communication and automation:
+
+### Creating an API Token
+
+<Steps>
+  <Step title="Navigate to Settings">
+    Log in to your [Rexec dashboard](https://rexec.pipeops.io) and go to **Settings → API Tokens**
+  </Step>
+  
+  <Step title="Generate Token">
+    Click **Generate Token** and give it a descriptive name
+  </Step>
+  
+  <Step title="Copy Token">
+    Copy the token immediately - it won't be shown again!
+    
+    API tokens start with `rexec_` followed by a random string.
+  </Step>
+</Steps>
+
+### Using API Tokens
+
+API tokens use the same `Authorization: Bearer` header format:
+
+```bash
+curl https://rexec.pipeops.io/api/containers \
+  -H "Authorization: Bearer rexec_abc123def456xyz789"
+```
+
+<CodeGroup>
+```javascript JavaScript
+const token = 'rexec_abc123def456xyz789';
+
+const response = await fetch('https://rexec.pipeops.io/api/containers', {
+  headers: {
+    'Authorization': `Bearer ${token}`
+  }
+});
+```
+
+```python Python
+import os
+import requests
+
+token = os.environ['REXEC_TOKEN']
+
+response = requests.get(
+    'https://rexec.pipeops.io/api/containers',
+    headers={'Authorization': f'Bearer {token}'}
+)
+```
+
+```go Go
+package main
+
+import (
+    "os"
+    rexec "github.com/PipeOpsHQ/rexec-go"
+)
+
+func main() {
+    client := rexec.NewClient(
+        "https://rexec.pipeops.io",
+        os.Getenv("REXEC_TOKEN"),
+    )
+    
+    containers, _ := client.Containers.List(ctx)
+}
+```
+</CodeGroup>
+
+<Warning>
+  Never commit API tokens to version control. Use environment variables or secret management tools.
+</Warning>
+
+## Token Validation
+
+The authentication middleware validates tokens by:
+
+1. **Checking token format** - JWT or API token prefix (`rexec_`)
+2. **Verifying signature** - For JWTs, validates HMAC-SHA256 signature
+3. **Checking expiration** - Ensures token hasn't expired
+4. **Looking up user** - Fetches user from database
+5. **Validating session** - If session ID present, checks if session is revoked
+6. **Enforcing security policies** - IP whitelist, screen lock, MFA
+
+### Session Revocation
+
+JWT tokens with a session ID (`sid` claim) are tracked in the database. When a token is revoked:
+
+```bash
+POST /api/sessions/:sessionId/revoke
+Authorization: Bearer YOUR_TOKEN
+```
+
+All subsequent requests with that token will return `401 Unauthorized` with:
+
+```json
+{
+  "error": "session_revoked"
+}
+```
+
+<Note>
+  Users with **single session mode** enabled will automatically revoke all other sessions when logging in from a new device.
+</Note>
+
+## WebSocket Authentication
+
+For WebSocket connections (terminal sessions, real-time events), pass the token via the `Sec-WebSocket-Protocol` header:
+
+```javascript
+const ws = new WebSocket(
+  'wss://rexec.pipeops.io/ws/terminal/container-id',
+  ['rexec.v1', `rexec.token.${token}`]
+);
+```
+
+Alternatively, for legacy clients, you can pass the token as a query parameter:
+
+```javascript
+const ws = new WebSocket(
+  `wss://rexec.pipeops.io/ws/terminal/container-id?token=${token}`
+);
+```
+
+<Warning>
+  The `Sec-WebSocket-Protocol` method is preferred as it doesn't expose tokens in URLs.
+</Warning>
+
+## Security Features
+
+### IP Whitelisting
+
+Restrict API access to specific IP addresses or CIDR ranges:
+
+```bash
+PUT /api/profile
+Authorization: Bearer YOUR_TOKEN
+
+{
+  "allowed_ips": [
+    "203.0.113.0/24",
+    "198.51.100.42"
+  ]
+}
+```
+
+Requests from non-whitelisted IPs will receive `403 Forbidden`:
+
+```json
+{
+  "error": "Access denied from this IP address"
+}
+```
+
+### Screen Lock
+
+When screen lock is enabled, tokens issued before the lock timestamp are rejected with `423 Locked`:
+
+```json
+{
+  "error": "session_locked"
+}
+```
+
+Unlock by calling:
+
+```bash
+POST /api/security/unlock
+Authorization: Bearer YOUR_TOKEN
+
+{
+  "password": "your-screen-lock-password"
+}
+```
+
+### Multi-Factor Authentication (MFA)
+
+When MFA is enabled, the OAuth callback returns a short-lived MFA token instead of a full token:
+
+```json
+{
+  "mfa_pending": true,
+  "mfa_token": "short-lived-token"
+}
+```
+
+Complete authentication by providing the TOTP code:
+
+```bash
+POST /api/mfa/complete-login
+Authorization: Bearer MFA_TOKEN
+
+{
+  "code": "123456"
+}
+```
+
+Response:
+```json
+{
+  "token": "full-jwt-token",
+  "user": { ... }
+}
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Store tokens securely">
+    Use environment variables for server-side applications:
+    
+    ```bash
+    export REXEC_TOKEN="rexec_abc123..."
+    ```
+    
+    For browser applications, use `localStorage` or `sessionStorage`.
+  </Step>
+  
+  <Step title="Handle token expiration">
+    Check for `401` responses and prompt users to re-authenticate:
+    
+    ```javascript
+    if (response.status === 401) {
+      // Token expired, redirect to login
+      window.location.href = '/login';
+    }
+    ```
+  </Step>
+  
+  <Step title="Use HTTPS in production">
+    Always use HTTPS to prevent token interception.
+  </Step>
+  
+  <Step title="Rotate tokens regularly">
+    For API tokens, rotate them periodically and revoke unused tokens.
+  </Step>
+  
+  <Step title="Limit token scope">
+    Create separate API tokens for different services with minimal required permissions.
+  </Step>
+</Steps>
+
+## Error Responses
+
+| Status | Error | Description |
+|--------|-------|-------------|
+| `401` | `Authorization token required` | No token provided |
+| `401` | `Invalid or expired token` | Token is malformed or expired |
+| `401` | `Invalid or expired API token` | API token not found or revoked |
+| `401` | `User not found` | User associated with token doesn't exist |
+| `401` | `session_revoked` | Token's session has been revoked |
+| `403` | `Access denied from this IP address` | IP not in whitelist |
+| `423` | `session_locked` | Account is screen locked |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Rate Limits" icon="gauge-high" href="/api/rate-limits">
+    Learn about API rate limits
+  </Card>
+  <Card title="Containers API" icon="cube" href="/api/containers">
+    Create and manage containers
+  </Card>
+  <Card title="Security" icon="shield" href="/security">
+    Security best practices
+  </Card>
+  <Card title="SDKs" icon="code" href="/sdks/overview">
+    Use official SDKs
+  </Card>
+</CardGroup>

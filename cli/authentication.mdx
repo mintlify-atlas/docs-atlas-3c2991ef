@@ -1,0 +1,460 @@
+---
+title: CLI Authentication
+description: Authenticate with the Rexec CLI using browser login, API tokens, or environment variables
+---
+
+The Rexec CLI supports multiple authentication methods to fit your workflow, whether you're working interactively or automating with CI/CD.
+
+## Login Methods
+
+### Interactive Browser Login
+
+The recommended method for interactive use:
+
+```bash
+rexec login
+```
+
+This command:
+1. Starts a local callback server on port 9876
+2. Opens your browser to the Rexec login page
+3. Redirects back to the CLI with your authentication token
+4. Saves credentials to `~/.rexec/config.json`
+
+**Example output:**
+
+```
+╔══════════════════════════════════════════╗
+║           Rexec CLI Login                ║
+╚══════════════════════════════════════════╝
+
+Opening browser for login...
+
+If browser doesn't open, visit:
+https://rexec.pipeops.io/cli-login?callback=http://localhost:9876/callback
+
+Waiting for login... (Press Ctrl+C to cancel)
+
+✓ Successfully logged in as johndoe (john@example.com)
+
+You can now use rexec commands or run rexec -i for interactive mode.
+```
+
+<Note>
+  If the browser doesn't open automatically, copy and paste the URL shown in your terminal.
+</Note>
+
+### Direct Token Login
+
+Provide your API token directly for non-interactive environments:
+
+```bash
+rexec login --token "your-api-token"
+```
+
+**When to use:**
+- Automating with scripts
+- CI/CD pipelines
+- Docker containers
+- Servers without browsers
+
+**Example:**
+
+```bash
+rexec login --token "rexec_abc123def456..."
+```
+
+Output:
+```
+✓ Logged in as johndoe (john@example.com)
+```
+
+### Environment Variable Authentication
+
+Set your token as an environment variable to avoid storing it in config files:
+
+```bash
+export REXEC_TOKEN="your-api-token"
+rexec whoami
+```
+
+This method:
+- Takes precedence over saved credentials
+- Doesn't modify `~/.rexec/config.json`
+- Perfect for temporary authentication
+- Ideal for CI/CD secrets
+
+<Warning>
+  Environment variables override saved credentials. If both are set, the environment variable is used.
+</Warning>
+
+## Token Types
+
+Rexec supports two types of authentication tokens:
+
+<Tabs>
+  <Tab title="API Tokens">
+    **API Tokens** start with `rexec_` and are long-lived credentials.
+
+    **Characteristics:**
+    - Format: `rexec_abc123...`
+    - Long-lived (don't expire)
+    - Can be revoked manually
+    - Best for automation and CI/CD
+
+    **Creating an API Token:**
+
+    <Steps>
+      <Step title="Go to Settings">
+        Visit [https://rexec.pipeops.io/settings](https://rexec.pipeops.io/settings)
+      </Step>
+      
+      <Step title="Navigate to API Tokens">
+        Click on the **API Tokens** section
+      </Step>
+      
+      <Step title="Generate Token">
+        Click **Generate New Token** and copy it immediately
+      </Step>
+      
+      <Step title="Login with Token">
+        ```bash
+        rexec login --token "rexec_your_token_here"
+        ```
+      </Step>
+    </Steps>
+
+    <Warning>
+      API tokens are shown only once. Store them securely (e.g., password manager, secrets vault).
+    </Warning>
+  </Tab>
+
+  <Tab title="JWT Tokens">
+    **JWT Tokens** are short-lived session tokens issued during browser login.
+
+    **Characteristics:**
+    - Format: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`
+    - Short-lived (expire after some time)
+    - Automatically refreshed by browser login
+    - Generated during interactive login
+
+    **When used:**
+    - Automatic during `rexec login` (browser flow)
+    - Stored in `~/.rexec/config.json`
+    - Used for interactive CLI sessions
+
+    <Info>
+      JWT tokens are handled automatically. You typically don't need to manage them manually.
+    </Info>
+  </Tab>
+</Tabs>
+
+## Managing Credentials
+
+### Check Current User
+
+Verify who you're logged in as:
+
+```bash
+rexec whoami
+```
+
+**Output:**
+
+```
+User Profile
+─────────────────────────────
+  Username: johndoe
+  Email:    john@example.com
+  Tier:     pro
+  Host:     https://rexec.pipeops.io
+```
+
+### Logout
+
+Clear saved credentials:
+
+```bash
+rexec logout
+```
+
+This removes `~/.rexec/config.json` but doesn't revoke tokens. To fully revoke access:
+
+1. Run `rexec logout` to clear local credentials
+2. Visit [Settings → API Tokens](https://rexec.pipeops.io/settings) to revoke tokens
+
+### View Configuration
+
+Inspect your current configuration:
+
+```bash
+rexec config
+```
+
+**Output:**
+
+```
+Configuration
+─────────────────────────────────────────
+  Config file: /home/user/.rexec/config.json
+  Host:        https://rexec.pipeops.io
+  Username:    johndoe
+  Email:       john@example.com
+  Tier:        pro
+  Token:       rexec_abc123...xyz789
+```
+
+### Change Host URL
+
+If you're using a self-hosted Rexec instance:
+
+```bash
+rexec config set host https://custom.rexec.io
+```
+
+Or use an environment variable:
+
+```bash
+export REXEC_HOST="https://custom.rexec.io"
+```
+
+## Configuration File
+
+Credentials are stored at `~/.rexec/config.json`:
+
+```json
+{
+  "host": "https://rexec.pipeops.io",
+  "token": "rexec_abc123...",
+  "username": "johndoe",
+  "email": "john@example.com",
+  "tier": "pro"
+}
+```
+
+<ParamField path="host" type="string" required>
+  The Rexec API host URL
+</ParamField>
+
+<ParamField path="token" type="string" required>
+  Your authentication token (API token or JWT)
+</ParamField>
+
+<ParamField path="username" type="string">
+  Your Rexec username (populated after login)
+</ParamField>
+
+<ParamField path="email" type="string">
+  Your account email (populated after login)
+</ParamField>
+
+<ParamField path="tier" type="string">
+  Your account tier (`free`, `pro`, `enterprise`)
+</ParamField>
+
+<Warning>
+  This file contains sensitive credentials. It's created with `0600` permissions (read/write by owner only).
+</Warning>
+
+## CI/CD Integration
+
+Authenticate in automated environments using secrets:
+
+<CodeGroup>
+```yaml GitHub Actions
+name: Deploy to Rexec
+on: [push]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Rexec CLI
+        run: |
+          curl -sSL https://github.com/rexec/rexec/releases/latest/download/rexec-linux-amd64 -o /usr/local/bin/rexec
+          chmod +x /usr/local/bin/rexec
+      
+      - name: Login to Rexec
+        run: rexec login --token ${{ secrets.REXEC_TOKEN }}
+      
+      - name: Deploy script
+        run: rexec run deploy-script --terminal ${{ vars.DEPLOY_TERMINAL }}
+```
+
+```yaml GitLab CI
+deploy:
+  image: ubuntu:latest
+  before_script:
+    - apt-get update && apt-get install -y curl
+    - curl -sSL https://github.com/rexec/rexec/releases/latest/download/rexec-linux-amd64 -o /usr/local/bin/rexec
+    - chmod +x /usr/local/bin/rexec
+    - rexec login --token $REXEC_TOKEN
+  script:
+    - rexec run deploy-script --terminal $DEPLOY_TERMINAL
+```
+
+```bash Docker
+FROM ubuntu:22.04
+
+# Install Rexec CLI
+RUN curl -sSL https://github.com/rexec/rexec/releases/latest/download/rexec-linux-amd64 -o /usr/local/bin/rexec && \
+    chmod +x /usr/local/bin/rexec
+
+# Authenticate (token passed as build arg)
+ARG REXEC_TOKEN
+ENV REXEC_TOKEN=${REXEC_TOKEN}
+
+CMD ["rexec", "whoami"]
+```
+
+```bash Jenkins
+stage('Deploy') {
+  steps {
+    sh '''
+      curl -sSL https://github.com/rexec/rexec/releases/latest/download/rexec-linux-amd64 -o /usr/local/bin/rexec
+      chmod +x /usr/local/bin/rexec
+      rexec login --token $REXEC_TOKEN
+      rexec run deploy-script --terminal $DEPLOY_TERMINAL
+    '''
+  }
+}
+```
+</CodeGroup>
+
+<Tip>
+  Always use secrets management (GitHub Secrets, GitLab Variables, etc.) to store your `REXEC_TOKEN`. Never commit tokens to source control.
+</Tip>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="'Not logged in' error">
+    If you see "Not logged in. Run 'rexec login' first":
+
+    **Cause:** No valid credentials found in config or environment.
+
+    **Solution:**
+    ```bash
+    # Check if you're logged in
+    rexec whoami
+
+    # If not, login again
+    rexec login
+    ```
+  </Accordion>
+
+  <Accordion title="Token validation fails">
+    If your token is rejected:
+
+    **For API tokens:**
+    ```bash
+    # Verify token is valid
+    curl -H "Authorization: Bearer rexec_your_token" \
+      https://rexec.pipeops.io/api/tokens/validate
+    ```
+
+    **For JWT tokens:**
+    ```bash
+    # Re-login to get a fresh token
+    rexec logout
+    rexec login
+    ```
+
+    <Note>
+      JWT tokens expire. If you see 401 errors, re-login to refresh your token.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Browser doesn't open during login">
+    If the browser doesn't open automatically:
+
+    1. Copy the URL shown in the terminal
+    2. Paste it into your browser manually
+    3. Complete the login flow
+
+    **Alternative - Manual token login:**
+    ```bash
+    rexec login --token "your-api-token"
+    ```
+
+    Get your API token from: [https://rexec.pipeops.io/settings](https://rexec.pipeops.io/settings)
+  </Accordion>
+
+  <Accordion title="Connection timeout">
+    If you can't reach the API:
+
+    ```bash
+    # Test connectivity
+    curl -I https://rexec.pipeops.io
+
+    # Check if custom host is set
+    echo $REXEC_HOST
+
+    # Verify config
+    rexec config
+    ```
+
+    **For self-hosted instances:**
+    ```bash
+    export REXEC_HOST="https://your-instance.com"
+    rexec login
+    ```
+  </Accordion>
+
+  <Accordion title="Multiple account management">
+    To use multiple Rexec accounts:
+
+    **Method 1: Environment variables (recommended)**
+    ```bash
+    # Account 1
+    export REXEC_TOKEN="account1_token"
+    rexec whoami
+
+    # Account 2
+    export REXEC_TOKEN="account2_token"
+    rexec whoami
+    ```
+
+    **Method 2: Shell aliases**
+    ```bash
+    # In ~/.bashrc or ~/.zshrc
+    alias rexec1="REXEC_TOKEN=account1_token rexec"
+    alias rexec2="REXEC_TOKEN=account2_token rexec"
+
+    # Usage
+    rexec1 ls
+    rexec2 ls
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Rotate Tokens Regularly" icon="rotate">
+    Generate new API tokens periodically and revoke old ones
+  </Card>
+  
+  <Card title="Use Environment Variables in CI" icon="shield">
+    Never hardcode tokens in scripts or Dockerfiles
+  </Card>
+  
+  <Card title="Limit Token Scope" icon="lock">
+    Create separate tokens for different services or environments
+  </Card>
+  
+  <Card title="Secure Config File" icon="file-shield">
+    Ensure `~/.rexec/config.json` has restrictive permissions (0600)
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Terminal Management" icon="terminal" href="/cli/terminal-management">
+    Create and manage cloud terminals
+  </Card>
+  <Card title="Snippets" icon="code" href="/cli/snippets">
+    Save and run command snippets
+  </Card>
+</CardGroup>

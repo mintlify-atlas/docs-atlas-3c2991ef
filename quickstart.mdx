@@ -1,80 +1,385 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Get Rexec running with Docker Compose in under 2 minutes
 ---
 
-## Get started in three steps
+# Quick Start Guide
 
-Get your documentation site running locally and make your first customization.
+Get Rexec up and running on your machine in minutes using Docker Compose. This guide covers the fastest path to a working installation.
 
-### Step 1: Set up your local environment
+## Prerequisites
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
+Before you begin, ensure you have:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Docker Engine" icon="docker">
+    Version 20.10 or later
+    
+    [Install Docker](https://docs.docker.com/get-docker/)
+  </Card>
+  <Card title="Docker Compose" icon="layer-group">
+    Version 2.0 or later (included with Docker Desktop)
+    
+    Verify: `docker compose version`
+  </Card>
 </CardGroup>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  **Minimum Requirements**: 2GB RAM, 10GB disk space, Linux/macOS/Windows with WSL2
 </Note>
+
+## Installation Methods
+
+<Tabs>
+  <Tab title="Docker Compose (Recommended)">
+    
+    The easiest way to run Rexec is with Docker Compose. This sets up the entire stack in one command.
+    
+    <Steps>
+      <Step title="Clone the Repository">
+        ```bash
+        git clone https://github.com/PipeOpsHQ/rexec.git
+        cd rexec/docker
+        ```
+      </Step>
+      
+      <Step title="Configure Environment Variables">
+        Create a `.env` file or use the defaults:
+        
+        ```bash
+        # Optional: Set custom credentials
+        echo "JWT_SECRET=$(openssl rand -base64 32)" > .env
+        echo "POSTGRES_PASSWORD=$(openssl rand -base64 32)" >> .env
+        ```
+        
+        <Accordion title="Key Environment Variables">
+          | Variable | Description | Default |
+          |----------|-------------|--------|
+          | `JWT_SECRET` | Secret for signing auth tokens | `rexec-dev-secret-change-me` |
+          | `POSTGRES_PASSWORD` | PostgreSQL password | `rexec_dev_password` |
+          | `PORT` | API listen port | `8080` |
+          | `REDIS_URL` | Redis connection string | `redis://redis:6379` |
+          | `DOCKER_HOST` | Remote Docker daemon (optional) | `unix:///var/run/docker.sock` |
+        </Accordion>
+      </Step>
+      
+      <Step title="Start the Stack">
+        ```bash
+        docker compose up --build
+        ```
+        
+        <Note>
+          First startup takes 2-3 minutes to download images and build the API. Subsequent starts are instant.
+        </Note>
+        
+        You should see output like:
+        ```
+        ✅ Connected to PostgreSQL
+        ✅ Connected to Docker (local socket)
+        ✅ Loaded 0 existing containers from Docker
+        ✅ Redis pub/sub enabled for horizontal scaling
+        [GIN] Listening and serving HTTP on :8080
+        ```
+      </Step>
+      
+      <Step title="Access the UI">
+        Open your browser to **http://localhost:8080**
+        
+        **Default Credentials:**
+        - Username: `admin`
+        - Password: `admin`
+        
+        <Warning>
+          **Security**: Change the default credentials immediately in production! Go to Settings > Account after logging in.
+        </Warning>
+      </Step>
+    </Steps>
+    
+  </Tab>
+  
+  <Tab title="Manual Installation (Development)">
+    
+    For development or custom deployments, you can run components individually.
+    
+    <Steps>
+      <Step title="Install Dependencies">
+        **Required:**
+        - Go 1.22 or later
+        - Node.js 18+ (for frontend)
+        - PostgreSQL 14+
+        - Redis 7+ (optional, for scaling)
+        - Docker Engine
+        
+        ```bash
+        # Verify versions
+        go version        # Should be 1.22+
+        node --version    # Should be v18+
+        docker --version  # Should be 20.10+
+        ```
+      </Step>
+      
+      <Step title="Clone and Setup">
+        ```bash
+        git clone https://github.com/PipeOpsHQ/rexec.git
+        cd rexec
+        make setup
+        ```
+        
+        This command:
+        - Downloads Go dependencies
+        - Pulls Docker base images (ubuntu, debian, arch)
+        - Creates volume directory at `/var/lib/rexec`
+        - Copies `.env.example` to `.env`
+      </Step>
+      
+      <Step title="Configure Database">
+        Create PostgreSQL database:
+        ```bash
+        psql -U postgres
+        CREATE DATABASE rexec;
+        CREATE USER rexec WITH PASSWORD 'rexec';
+        GRANT ALL PRIVILEGES ON DATABASE rexec TO rexec;
+        ```
+        
+        Update `.env`:
+        ```bash
+        DATABASE_URL=postgres://rexec:rexec@localhost:5432/rexec?sslmode=disable
+        ```
+      </Step>
+      
+      <Step title="Build and Run">
+        **Backend:**
+        ```bash
+        make build
+        ./bin/rexec server
+        ```
+        
+        **Frontend (in a separate terminal):**
+        ```bash
+        cd frontend
+        npm install
+        npm run dev
+        ```
+        
+        The API runs on `http://localhost:8080` and the frontend dev server on `http://localhost:5173`.
+      </Step>
+    </Steps>
+    
+  </Tab>
+</Tabs>
+
+## Verify Installation
+
+<Steps>
+  <Step title="Check Health Endpoint">
+    ```bash
+    curl http://localhost:8080/health
+    ```
+    
+    Expected response:
+    ```json
+    {
+      "status": "ok",
+      "database": "connected",
+      "docker": "connected",
+      "containers_total": 0,
+      "containers_running": 0
+    }
+    ```
+  </Step>
+  
+  <Step title="Create Your First Terminal">
+    Log in to the web UI at `http://localhost:8080` and click **"New Terminal"**.
+    
+    <CardGroup cols={3}>
+      <Card title="Ubuntu 24.04" icon="ubuntu">
+        Latest LTS with apt package manager
+      </Card>
+      <Card title="Debian Bookworm" icon="debian">
+        Stable, lightweight Debian 12
+      </Card>
+      <Card title="Arch Linux" icon="arch-linux">
+        Rolling release with pacman
+      </Card>
+    </CardGroup>
+    
+    Your terminal should be ready in **3-5 seconds**.
+  </Step>
+  
+  <Step title="Test WebSocket Connection">
+    The terminal uses WebSockets for real-time streaming. Verify it works:
+    
+    ```bash
+    # In your Rexec terminal
+    echo "Hello from Rexec!"
+    ls -la
+    ```
+    
+    You should see instant output with no lag.
+  </Step>
+</Steps>
+
+## Configuration
+
+Rexec is configured via environment variables. Here are the most important ones:
+
+<AccordionGroup>
+  <Accordion title="Server Configuration">
+    ```bash
+    # API server
+    PORT=8080
+    GIN_MODE=debug              # Use 'release' for production
+    BASE_URL=http://localhost:8080
+    REXEC_APP_URL=http://localhost:5173  # Frontend URL (dev)
+    
+    # WebSocket host for port forwarding
+    REXEC_WS_HOST=localhost:8080
+    
+    # CORS: Comma-separated allowed origins
+    ALLOWED_ORIGINS=http://localhost:5173,http://localhost:8080
+    BLOCK_EMPTY_ORIGIN=false    # Set true to block CLI tools
+    ```
+  </Accordion>
+  
+  <Accordion title="Security & Authentication">
+    ```bash
+    # JWT secret (REQUIRED in production)
+    JWT_SECRET=your-super-secret-jwt-key-change-this
+    # Generate with: openssl rand -base64 32
+    
+    # Encryption key for sensitive data (16, 24, or 32 bytes)
+    REXEC_ENCRYPTION_KEY=rexec-dev-key-do-not-use-in-prod
+    # Generate with: openssl rand -base64 32
+    ```
+    
+    <Warning>
+      **Production**: Generate strong random secrets and store them securely. Never commit secrets to Git.
+    </Warning>
+  </Accordion>
+  
+  <Accordion title="Database & Redis">
+    ```bash
+    # PostgreSQL
+    DATABASE_URL=postgres://rexec:rexec@localhost:5432/rexec?sslmode=disable
+    
+    # Redis (optional but recommended for production)
+    REDIS_URL=redis://localhost:6379
+    # Required for horizontal scaling and session management
+    ```
+  </Accordion>
+  
+  <Accordion title="Docker & Container Runtime">
+    ```bash
+    # Docker connection
+    DOCKER_HOST=unix:///var/run/docker.sock
+    # For remote Docker: tcp://remote-host:2376
+    
+    # TLS for remote Docker (optional)
+    DOCKER_TLS_VERIFY=1
+    DOCKER_CA_CERT=/path/to/ca.pem
+    DOCKER_CLIENT_CERT=/path/to/cert.pem
+    DOCKER_CLIENT_KEY=/path/to/key.pem
+    
+    # Container settings
+    CONTAINER_NETWORK=rexec-network
+    CONTAINER_IDLE_TIMEOUT=3600  # Seconds before cleanup
+    VOLUME_PATH=/var/lib/rexec/volumes
+    
+    # Resource limits (defaults)
+    DEFAULT_MEMORY_MB=512
+    DEFAULT_CPU_SHARES=512
+    DEFAULT_DISK_MB=1024
+    ```
+  </Accordion>
+  
+  <Accordion title="Storage & Recordings">
+    ```bash
+    # Local storage
+    RECORDINGS_PATH=./data/recordings
+    SCRIPTS_DIR=./scripts
+    DOWNLOADS_DIR=./downloads
+    
+    # S3-compatible storage (optional)
+    S3_BUCKET=your-bucket
+    S3_REGION=us-east-1
+    S3_ENDPOINT=minio:9000          # For MinIO
+    S3_ACCESS_KEY_ID=minioadmin
+    S3_SECRET_ACCESS_KEY=minioadmin
+    S3_PREFIX=recordings
+    S3_FORCE_PATH_STYLE=true        # Required for MinIO
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+Now that Rexec is running, explore these features:
+
+<CardGroup cols={2}>
+  <Card title="Connect Your Servers" icon="server" href="/agent">
+    Install the Rexec Agent on your infrastructure for unified remote access
+  </Card>
+  <Card title="Explore the Architecture" icon="sitemap" href="/architecture">
+    Learn how components work together and how to scale
+  </Card>
+  <Card title="CLI Tools" icon="terminal" href="/cli">
+    Install rexec-cli and rexec-tui for terminal access from your shell
+  </Card>
+  <Card title="API Integration" icon="code" href="/sdk">
+    Embed terminals in your app with our Go, TypeScript, Python, or Rust SDKs
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Port 8080 already in use">
+    Change the port in your `.env` file:
+    ```bash
+    PORT=3000
+    ```
+    Then restart: `docker compose down && docker compose up`
+  </Accordion>
+  
+  <Accordion title="Cannot connect to Docker daemon">
+    Ensure Docker is running:
+    ```bash
+    docker ps  # Should show running containers
+    ```
+    
+    If using rootless Docker or Podman, update `DOCKER_HOST` in `.env`:
+    ```bash
+    DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock
+    ```
+  </Accordion>
+  
+  <Accordion title="PostgreSQL connection failed">
+    Verify PostgreSQL is accessible:
+    ```bash
+    docker compose logs postgres
+    ```
+    
+    Check credentials in `.env` match the database user/password.
+  </Accordion>
+  
+  <Accordion title="Containers fail to start">
+    Check Docker daemon resources:
+    ```bash
+    docker info | grep -i memory
+    docker info | grep -i cpus
+    ```
+    
+    Ensure sufficient disk space:
+    ```bash
+    df -h /var/lib/docker
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Production Deployment
+
+For production deployments, see our comprehensive guide:
+
+<Card title="Production Deployment Guide" icon="rocket" href="/deployment">
+  Learn about SSL/TLS, reverse proxies, monitoring, backups, and scaling strategies
+</Card>

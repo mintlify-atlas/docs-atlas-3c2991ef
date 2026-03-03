@@ -1,0 +1,866 @@
+---
+title: .NET SDK
+description: Official .NET SDK for Rexec - Build container orchestration with C# and modern async/await patterns
+---
+
+## Installation
+
+Install the .NET SDK using the dotnet CLI:
+
+```bash
+dotnet add package Rexec
+```
+
+Or via NuGet Package Manager:
+
+```powershell
+Install-Package Rexec
+```
+
+**Requirements:** .NET 6.0 or later
+
+## Quick Start
+
+```csharp
+using Rexec;
+
+var client = new RexecClient(
+    Environment.GetEnvironmentVariable("REXEC_URL"),
+    Environment.GetEnvironmentVariable("REXEC_TOKEN")
+);
+
+// Create a container
+var container = await client.Containers.CreateAsync("ubuntu:24.04");
+Console.WriteLine($"Created: {container.Id}");
+
+// Execute a command
+var result = await client.Containers.ExecAsync(
+    container.Id,
+    "echo 'Hello from .NET!'"
+);
+Console.WriteLine(result.Stdout);
+
+// Clean up
+await client.Containers.DeleteAsync(container.Id);
+```
+
+## Client Initialization
+
+### Basic Client Creation
+
+```csharp
+using Rexec;
+
+var client = new RexecClient(
+    "https://your-rexec-instance.com",
+    "your-api-token"
+);
+```
+
+### With Dependency Injection
+
+```csharp
+using Microsoft.Extensions.DependencyInjection;
+using Rexec;
+
+services.AddSingleton<IRexecClient>(sp =>
+    new RexecClient(
+        Configuration["Rexec:Url"],
+        Configuration["Rexec:Token"]
+    )
+);
+```
+
+### IDisposable Pattern
+
+The client implements `IDisposable`:
+
+```csharp
+using (var client = new RexecClient(baseUrl, token))
+{
+    // Use client
+    var containers = await client.Containers.ListAsync();
+}
+// HttpClient is disposed automatically
+```
+
+## Container Operations
+
+The `Containers` service provides methods for managing sandboxed environments.
+
+### Create Container
+
+<CodeGroup>
+```csharp Basic
+var container = await client.Containers.CreateAsync("ubuntu:24.04");
+```
+
+```csharp With Options
+var request = new CreateContainerRequest("node:20")
+{
+    Name = "my-node-sandbox",
+    Environment = new Dictionary<string, string>
+    {
+        ["NODE_ENV"] = "production",
+        ["API_KEY"] = Environment.GetEnvironmentVariable("API_KEY")
+    },
+    Labels = new Dictionary<string, string>
+    {
+        ["project"] = "demo",
+        ["owner"] = "engineering"
+    }
+};
+
+var container = await client.Containers.CreateAsync(request);
+```
+
+```csharp Object Initializer
+var container = await client.Containers.CreateAsync(
+    new CreateContainerRequest("python:3.12")
+    {
+        Name = "ml-worker",
+        Environment = new()
+        {
+            ["PYTHONPATH"] = "/app",
+            ["CUDA_VISIBLE_DEVICES"] = "0"
+        },
+        Labels = new()
+        {
+            ["type"] = "ml",
+            ["gpu"] = "true"
+        }
+    }
+);
+```
+</CodeGroup>
+
+### List Containers
+
+```csharp
+var containers = await client.Containers.ListAsync();
+
+foreach (var c in containers)
+{
+    Console.WriteLine($"{c.Name}: {c.Status}");
+}
+```
+
+### Get Container
+
+```csharp
+try
+{
+    var container = await client.Containers.GetAsync(containerId);
+    
+    Console.WriteLine($"Container: {container.Name}");
+    Console.WriteLine($"Status: {container.Status}");
+    Console.WriteLine($"Created: {container.CreatedAt}");
+}
+catch (RexecException ex) when (ex.IsApiError)
+{
+    Console.WriteLine($"API Error {ex.StatusCode}: {ex.Message}");
+}
+```
+
+### Lifecycle Management
+
+<CodeGroup>
+```csharp Start
+await client.Containers.StartAsync(containerId);
+Console.WriteLine("Container started");
+```
+
+```csharp Stop
+await client.Containers.StopAsync(containerId);
+Console.WriteLine("Container stopped");
+```
+
+```csharp Delete
+await client.Containers.DeleteAsync(containerId);
+Console.WriteLine("Container deleted");
+```
+</CodeGroup>
+
+### Execute Commands
+
+<CodeGroup>
+```csharp String Command
+var result = await client.Containers.ExecAsync(
+    containerId,
+    "ls -la"
+);
+
+if (result.ExitCode == 0)
+{
+    Console.WriteLine(result.Stdout);
+}
+else
+{
+    Console.Error.WriteLine(result.Stderr);
+}
+```
+
+```csharp Array Command
+var result = await client.Containers.ExecAsync(
+    containerId,
+    new[] { "/bin/sh", "-c", "python script.py" }
+);
+```
+</CodeGroup>
+
+### With Cancellation Token
+
+```csharp
+var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+try
+{
+    var container = await client.Containers.CreateAsync(
+        "ubuntu:24.04",
+        cts.Token
+    );
+}
+catch (OperationCanceledException)
+{
+    Console.WriteLine("Operation timed out");
+}
+```
+
+## File Operations
+
+The `Files` service enables file management within containers.
+
+### List Files
+
+```csharp
+var files = await client.Files.ListAsync(containerId, "/home");
+
+foreach (var f in files)
+{
+    var icon = f.IsDir ? "📁" : "📄";
+    Console.WriteLine($"{icon} {f.Name} ({f.Size} bytes)");
+}
+```
+
+### Download Files
+
+```csharp
+using System.IO;
+
+// Read as string
+var content = await client.Files.ReadStringAsync(containerId, "/etc/hostname");
+Console.WriteLine(content);
+
+// Download as bytes
+var data = await client.Files.ReadAsync(containerId, "/etc/passwd");
+
+// Save to file
+await File.WriteAllBytesAsync("passwd.txt", data);
+```
+
+### Upload Files
+
+```csharp
+using System.IO;
+using System.Text;
+
+// Write string
+await client.Files.WriteAsync(
+    containerId,
+    "/home/script.py",
+    "print('hello world')"
+);
+
+// Upload bytes
+var content = await File.ReadAllBytesAsync("local_file.txt");
+await client.Files.WriteAsync(containerId, "/home/remote.txt", content);
+```
+
+### Create Directory
+
+```csharp
+await client.Files.MkdirAsync(containerId, "/home/mydir");
+Console.WriteLine("Directory created");
+```
+
+### Delete File
+
+```csharp
+await client.Files.DeleteAsync(containerId, "/tmp/scratch.txt");
+Console.WriteLine("File deleted");
+```
+
+## Terminal Connections
+
+The `Terminal` service provides WebSocket-based terminal access with full PTY support.
+
+### Connect to Terminal
+
+```csharp
+var terminal = await client.Terminal.ConnectAsync(containerId);
+```
+
+### Send Commands
+
+```csharp
+// Send a simple command
+await terminal.WriteAsync("ls -la\n");
+
+// Send multiple commands
+var commands = new[]
+{
+    "cd /app\n",
+    "dotnet restore\n",
+    "dotnet run\n"
+};
+
+foreach (var cmd in commands)
+{
+    await terminal.WriteAsync(cmd);
+}
+```
+
+### Handle Output
+
+```csharp
+terminal.OnData += (sender, data) => Console.Write(data);
+terminal.OnClose += (sender, _) => Console.WriteLine("\nDisconnected");
+terminal.OnError += (sender, error) => Console.Error.WriteLine($"Error: {error}");
+```
+
+### Resize Terminal
+
+```csharp
+await terminal.ResizeAsync(120, 40);
+```
+
+### Close Connection
+
+```csharp
+await terminal.CloseAsync();
+```
+
+## Error Handling
+
+The SDK provides structured exception handling:
+
+```csharp
+try
+{
+    var container = await client.Containers.GetAsync("invalid-id");
+}
+catch (RexecException ex) when (ex.IsApiError)
+{
+    switch (ex.StatusCode)
+    {
+        case 404:
+            Console.WriteLine("Container not found");
+            break;
+        case 401:
+            Console.WriteLine("Authentication failed");
+            break;
+        default:
+            Console.WriteLine($"API Error {ex.StatusCode}: {ex.Message}");
+            break;
+    }
+}
+catch (RexecException ex)
+{
+    Console.WriteLine($"Network error: {ex.Message}");
+}
+```
+
+## Complete Examples
+
+### ASP.NET Core API Integration
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+using Rexec;
+
+[ApiController]
+[Route("api/[controller]")]
+public class ExecutionController : ControllerBase
+{
+    private readonly IRexecClient _client;
+    
+    public ExecutionController(IRexecClient client)
+    {
+        _client = client;
+    }
+    
+    [HttpPost]
+    public async Task<ActionResult<ExecutionResult>> ExecuteCode(
+        [FromBody] CodeRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var containerRequest = new CreateContainerRequest(request.LanguageImage)
+            {
+                Labels = new() { ["type"] = "execution" }
+            };
+            
+            var container = await _client.Containers.CreateAsync(
+                containerRequest,
+                cancellationToken
+            );
+            
+            try
+            {
+                await _client.Containers.StartAsync(container.Id, cancellationToken);
+                
+                // Write user code
+                await _client.Files.WriteAsync(
+                    container.Id,
+                    $"/tmp/code.{request.Extension}",
+                    request.Code,
+                    cancellationToken
+                );
+                
+                // Execute
+                var result = await _client.Containers.ExecAsync(
+                    container.Id,
+                    request.RunCommand,
+                    cancellationToken
+                );
+                
+                return Ok(new ExecutionResult
+                {
+                    Stdout = result.Stdout,
+                    Stderr = result.Stderr,
+                    ExitCode = result.ExitCode
+                });
+            }
+            finally
+            {
+                await _client.Containers.DeleteAsync(container.Id, cancellationToken);
+            }
+        }
+        catch (RexecException ex)
+        {
+            return StatusCode(500, new { error = ex.Message });
+        }
+    }
+}
+```
+
+### CI/CD Pipeline Integration
+
+```csharp
+using Rexec;
+using System;
+using System.Threading.Tasks;
+
+public class CIPipeline
+{
+    private readonly RexecClient _client;
+    
+    public CIPipeline(string baseUrl, string token)
+    {
+        _client = new RexecClient(baseUrl, token);
+    }
+    
+    public async Task<bool> RunTestsAsync(string image, string[] commands)
+    {
+        var request = new CreateContainerRequest(image)
+        {
+            Environment = new() { ["CI"] = "true" }
+        };
+        
+        var container = await _client.Containers.CreateAsync(request);
+        
+        try
+        {
+            await _client.Containers.StartAsync(container.Id);
+            
+            foreach (var cmd in commands)
+            {
+                var result = await _client.Containers.ExecAsync(container.Id, cmd);
+                
+                if (result.ExitCode != 0)
+                {
+                    Console.Error.WriteLine($"Command failed: {cmd}");
+                    Console.Error.WriteLine(result.Stderr);
+                    return false;
+                }
+                
+                Console.WriteLine(result.Stdout);
+            }
+            
+            return true;
+        }
+        finally
+        {
+            await _client.Containers.DeleteAsync(container.Id);
+        }
+    }
+}
+
+// Usage
+var pipeline = new CIPipeline(
+    Environment.GetEnvironmentVariable("REXEC_URL"),
+    Environment.GetEnvironmentVariable("REXEC_TOKEN")
+);
+
+var success = await pipeline.RunTestsAsync("mcr.microsoft.com/dotnet/sdk:8.0", new[]
+{
+    "dotnet restore",
+    "dotnet build",
+    "dotnet test"
+});
+
+Environment.Exit(success ? 0 : 1);
+```
+
+### xUnit Integration Testing
+
+```csharp
+using Rexec;
+using Xunit;
+using System.Threading.Tasks;
+
+public class IntegrationTests : IAsyncLifetime
+{
+    private RexecClient _client;
+    private Container _container;
+    
+    public async Task InitializeAsync()
+    {
+        _client = new RexecClient(
+            Environment.GetEnvironmentVariable("REXEC_URL"),
+            Environment.GetEnvironmentVariable("REXEC_TOKEN")
+        );
+        
+        _container = await _client.Containers.CreateAsync("ubuntu:24.04");
+        await _client.Containers.StartAsync(_container.Id);
+    }
+    
+    public async Task DisposeAsync()
+    {
+        if (_container != null)
+        {
+            await _client.Containers.DeleteAsync(_container.Id);
+        }
+        _client?.Dispose();
+    }
+    
+    [Fact]
+    public async Task TestCommandExecution()
+    {
+        var result = await _client.Containers.ExecAsync(
+            _container.Id,
+            "echo hello"
+        );
+        
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("hello", result.Stdout);
+    }
+    
+    [Fact]
+    public async Task TestFileOperations()
+    {
+        // Write file
+        await _client.Files.WriteAsync(
+            _container.Id,
+            "/tmp/test.txt",
+            "hello world"
+        );
+        
+        // Read file
+        var content = await _client.Files.ReadStringAsync(
+            _container.Id,
+            "/tmp/test.txt"
+        );
+        
+        Assert.Equal("hello world", content.Trim());
+    }
+}
+```
+
+### Background Service
+
+```csharp
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Rexec;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+public class ContainerCleanupService : BackgroundService
+{
+    private readonly IRexecClient _client;
+    private readonly ILogger<ContainerCleanupService> _logger;
+    
+    public ContainerCleanupService(
+        IRexecClient client,
+        ILogger<ContainerCleanupService> logger)
+    {
+        _client = client;
+        _logger = logger;
+    }
+    
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await CleanupOldContainersAsync(stoppingToken);
+                await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during cleanup");
+            }
+        }
+    }
+    
+    private async Task CleanupOldContainersAsync(CancellationToken cancellationToken)
+    {
+        var containers = await _client.Containers.ListAsync(cancellationToken);
+        var cutoff = DateTimeOffset.UtcNow.AddHours(-24);
+        
+        foreach (var container in containers)
+        {
+            if (container.CreatedAt < cutoff)
+            {
+                try
+                {
+                    await _client.Containers.DeleteAsync(container.Id, cancellationToken);
+                    _logger.LogInformation($"Deleted old container: {container.Id}");
+                }
+                catch (RexecException ex)
+                {
+                    _logger.LogWarning(ex, $"Failed to delete container: {container.Id}");
+                }
+            }
+        }
+    }
+}
+```
+
+### Parallel Test Execution
+
+```csharp
+using Rexec;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+
+public class ParallelTestRunner
+{
+    private readonly RexecClient _client;
+    
+    public ParallelTestRunner(string baseUrl, string token)
+    {
+        _client = new RexecClient(baseUrl, token);
+    }
+    
+    public async Task<List<TestResult>> RunTestsInParallelAsync(
+        IEnumerable<TestCase> tests)
+    {
+        var tasks = tests.Select(test => RunTestAsync(test));
+        var results = await Task.WhenAll(tasks);
+        return results.ToList();
+    }
+    
+    private async Task<TestResult> RunTestAsync(TestCase test)
+    {
+        try
+        {
+            var container = await _client.Containers.CreateAsync(test.Image);
+            
+            try
+            {
+                await _client.Containers.StartAsync(container.Id);
+                
+                var result = await _client.Containers.ExecAsync(
+                    container.Id,
+                    test.Command
+                );
+                
+                return new TestResult
+                {
+                    Name = test.Name,
+                    Passed = result.ExitCode == 0,
+                    Output = result.Stdout
+                };
+            }
+            finally
+            {
+                await _client.Containers.DeleteAsync(container.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            return new TestResult
+            {
+                Name = test.Name,
+                Passed = false,
+                Output = ex.Message
+            };
+        }
+    }
+}
+
+public record TestCase(string Name, string Image, string Command);
+public record TestResult(string Name, bool Passed, string Output);
+```
+
+## API Reference
+
+### RexecClient
+
+```csharp
+public class RexecClient : IDisposable
+{
+    public RexecClient(string baseUrl, string token)
+    
+    public ContainerService Containers { get; }
+    public FileService Files { get; }
+    public TerminalService Terminal { get; }
+    
+    public void Dispose()
+}
+```
+
+### Types
+
+<ParamField path="Container" type="class">
+  Container instance.
+  
+  <ParamField path="Id" type="string">Container ID</ParamField>
+  <ParamField path="Name" type="string">Container name</ParamField>
+  <ParamField path="Image" type="string">Docker image</ParamField>
+  <ParamField path="Status" type="string">Current status</ParamField>
+  <ParamField path="CreatedAt" type="DateTimeOffset">Creation timestamp</ParamField>
+  <ParamField path="StartedAt" type="DateTimeOffset?">Start timestamp</ParamField>
+  <ParamField path="Labels" type="Dictionary<string, string>">Container labels</ParamField>
+  <ParamField path="Environment" type="Dictionary<string, string>">Environment variables</ParamField>
+</ParamField>
+
+<ParamField path="CreateContainerRequest" type="class">
+  Container creation request.
+  
+  <ParamField path="Image" type="string" required>Docker image to use</ParamField>
+  <ParamField path="Name" type="string">Optional container name</ParamField>
+  <ParamField path="Environment" type="Dictionary<string, string>">Environment variables</ParamField>
+  <ParamField path="Labels" type="Dictionary<string, string>">Container labels</ParamField>
+</ParamField>
+
+<ParamField path="FileInfo" type="class">
+  File metadata.
+  
+  <ParamField path="Name" type="string">File name</ParamField>
+  <ParamField path="Path" type="string">Full path</ParamField>
+  <ParamField path="Size" type="long">File size in bytes</ParamField>
+  <ParamField path="Mode" type="string">File permissions</ParamField>
+  <ParamField path="ModTime" type="DateTimeOffset">Last modification time</ParamField>
+  <ParamField path="IsDir" type="bool">Whether this is a directory</ParamField>
+</ParamField>
+
+<ParamField path="ExecResult" type="class">
+  Command execution result.
+  
+  <ParamField path="Stdout" type="string">Standard output</ParamField>
+  <ParamField path="Stderr" type="string">Standard error</ParamField>
+  <ParamField path="ExitCode" type="int">Exit code</ParamField>
+</ParamField>
+
+### Services
+
+**ContainerService** - Access via `client.Containers`
+- `Task<List<Container>> ListAsync(CancellationToken)` - List all containers
+- `Task<Container> GetAsync(string id, CancellationToken)` - Get container by ID
+- `Task<Container> CreateAsync(string image, CancellationToken)` - Create a container
+- `Task<Container> CreateAsync(CreateContainerRequest, CancellationToken)` - Create with options
+- `Task DeleteAsync(string id, CancellationToken)` - Delete a container
+- `Task StartAsync(string id, CancellationToken)` - Start a container
+- `Task StopAsync(string id, CancellationToken)` - Stop a container
+- `Task<ExecResult> ExecAsync(string id, string command, CancellationToken)` - Execute command
+- `Task<ExecResult> ExecAsync(string id, string[] command, CancellationToken)` - Execute with array
+
+**FileService** - Access via `client.Files`
+- `Task<List<FileInfo>> ListAsync(string containerId, string path, CancellationToken)` - List files
+- `Task<byte[]> ReadAsync(string containerId, string path, CancellationToken)` - Read file
+- `Task<string> ReadStringAsync(string containerId, string path, CancellationToken)` - Read as string
+- `Task WriteAsync(string containerId, string path, string content, CancellationToken)` - Write string
+- `Task WriteAsync(string containerId, string path, byte[] content, CancellationToken)` - Write bytes
+- `Task MkdirAsync(string containerId, string path, CancellationToken)` - Create directory
+- `Task DeleteAsync(string containerId, string path, CancellationToken)` - Delete file
+
+**TerminalService** - Access via `client.Terminal`
+- `Task<Terminal> ConnectAsync(string containerId, CancellationToken)` - Connect to terminal
+
+**Terminal** methods:
+- `Task WriteAsync(string data)` - Send data to terminal
+- `event EventHandler<string> OnData` - Data received event
+- `event EventHandler OnClose` - Connection closed event
+- `event EventHandler<Exception> OnError` - Error event
+- `Task ResizeAsync(int cols, int rows)` - Resize terminal
+- `Task CloseAsync()` - Close connection
+
+## Best Practices
+
+<Note>
+**Use Dependency Injection** - Register the client as a singleton:
+```csharp
+services.AddSingleton<IRexecClient>(sp =>
+    new RexecClient(baseUrl, token)
+);
+```
+</Note>
+
+<Note>
+**Leverage CancellationToken** - Pass cancellation tokens for graceful cancellation:
+```csharp
+var container = await client.Containers.CreateAsync(
+    "ubuntu:24.04",
+    cancellationToken
+);
+```
+</Note>
+
+<Note>
+**Use IDisposable** - Dispose the client to free resources:
+```csharp
+using (var client = new RexecClient(baseUrl, token))
+{
+    // Use client
+}
+```
+</Note>
+
+<Note>
+**Handle Exceptions** - Use `when` clauses for specific error handling:
+```csharp
+catch (RexecException ex) when (ex.IsApiError)
+{
+    // Handle API errors
+}
+```
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="PHP SDK" icon="php" href="/sdks/php">
+    Explore the PHP SDK
+  </Card>
+  <Card title="Go SDK" icon="golang" href="/sdks/go">
+    Check out the Go SDK
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    View complete API documentation
+  </Card>
+  <Card title="Examples" icon="code" href="/examples">
+    Browse more code examples
+  </Card>
+</CardGroup>

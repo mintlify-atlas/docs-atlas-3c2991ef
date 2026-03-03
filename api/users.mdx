@@ -1,0 +1,344 @@
+---
+title: User Endpoints
+description: User authentication and profile management
+---
+
+## Overview
+
+User endpoints handle authentication, profile management, and session control. Rexec supports both OAuth (via PipeOps) and guest sessions.
+
+## Guest Login
+
+Create a temporary guest session with a 50-hour time limit. Perfect for trying out Rexec without creating an account.
+
+```bash
+POST /api/auth/guest
+```
+
+<CodeGroup>
+```bash cURL
+curl -X POST https://api.rexec.io/api/auth/guest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "demo-user",
+    "email": "demo@example.com"
+  }'
+```
+
+```javascript JavaScript
+const response = await fetch('https://api.rexec.io/api/auth/guest', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    username: 'demo-user',
+    email: 'demo@example.com'
+  })
+});
+const data = await response.json();
+console.log('Token:', data.token);
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    'https://api.rexec.io/api/auth/guest',
+    json={
+        'username': 'demo-user',
+        'email': 'demo@example.com'
+    }
+)
+data = response.json()
+print(f"Token: {data['token']}")
+print(f"Expires in: {data['expires_in']} seconds")
+```
+</CodeGroup>
+
+<ParamField body="username" type="string" required>
+  Username (2-30 characters, alphanumeric, underscore, hyphen only)
+</ParamField>
+
+<ParamField body="email" type="string">
+  Optional email for returning guests. If provided and a guest with this email exists, returns their existing session.
+</ParamField>
+
+<ResponseField name="token" type="string" required>
+  JWT token for authentication (valid for 50 hours)
+</ResponseField>
+
+<ResponseField name="user" type="object" required>
+  User object
+  
+  <Expandable title="User Object">
+    <ResponseField name="id" type="string" required>
+      User ID
+    </ResponseField>
+    <ResponseField name="username" type="string" required>
+      Username
+    </ResponseField>
+    <ResponseField name="email" type="string" required>
+      Email address
+    </ResponseField>
+    <ResponseField name="tier" type="string" required>
+      User tier: `guest`
+    </ResponseField>
+    <ResponseField name="subscription_active" type="boolean" required>
+      Always `false` for guests
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="guest" type="boolean">
+  Always `true`
+</ResponseField>
+
+<ResponseField name="expires_in" type="integer">
+  Session expiration in seconds (180000 = 50 hours)
+</ResponseField>
+
+<ResponseField name="returning_guest" type="boolean">
+  Whether this is a returning guest (matched by email)
+</ResponseField>
+
+<ResponseField name="containers" type="integer">
+  Maximum containers allowed (1 for guests)
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Welcome message
+</ResponseField>
+
+<ResponseExample>
+```json 200 OK
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "user": {
+    "id": "guest_abc123",
+    "username": "demo-user",
+    "email": "demo@example.com",
+    "tier": "guest",
+    "subscription_active": false,
+    "is_admin": false,
+    "created_at": "2024-01-15T10:30:00Z",
+    "updated_at": "2024-01-15T10:30:00Z"
+  },
+  "guest": true,
+  "expires_in": 180000,
+  "returning_guest": false,
+  "containers": 1,
+  "message": "Guest session active for 50 hours. Sign in with PipeOps for unlimited sessions."
+}
+```
+</ResponseExample>
+
+<Warning>
+  Guest sessions expire after 50 hours. Containers and data will be deleted after expiration. Sign in with PipeOps for persistent storage.
+</Warning>
+
+## Get OAuth URL
+
+Get the PipeOps OAuth authorization URL for user login.
+
+```bash
+GET /api/auth/oauth-url
+```
+
+<ResponseExample>
+```json 200 OK
+{
+  "url": "https://auth.pipeops.io/oauth/authorize?client_id=...&redirect_uri=...&state=...&code_challenge=...&code_challenge_method=S256"
+}
+```
+</ResponseExample>
+
+<Note>
+  This endpoint is typically called by the frontend to initiate the OAuth flow. The user is redirected to PipeOps to authenticate, then back to your application with an authorization code.
+</Note>
+
+## OAuth Callback
+
+Handles the OAuth callback after user authenticates with PipeOps. This endpoint is called automatically by the OAuth provider.
+
+```bash
+GET /api/auth/callback?code=...&state=...
+```
+
+<Note>
+  This is an internal endpoint used by the OAuth flow. Your application should not call this directly.
+</Note>
+
+## Get Current User
+
+Get the authenticated user's profile.
+
+```bash
+GET /api/profile
+```
+
+<CodeGroup>
+```bash cURL
+curl -X GET https://api.rexec.io/api/profile \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```javascript JavaScript
+const response = await fetch('https://api.rexec.io/api/profile', {
+  headers: { 'Authorization': 'Bearer YOUR_TOKEN' }
+});
+const user = await response.json();
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    'https://api.rexec.io/api/profile',
+    headers={'Authorization': 'Bearer YOUR_TOKEN'}
+)
+user = response.json()
+```
+</CodeGroup>
+
+<ResponseField name="id" type="string" required>
+  User ID
+</ResponseField>
+
+<ResponseField name="email" type="string" required>
+  Email address
+</ResponseField>
+
+<ResponseField name="username" type="string" required>
+  Username
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Display name (first + last name)
+</ResponseField>
+
+<ResponseField name="first_name" type="string">
+  First name
+</ResponseField>
+
+<ResponseField name="last_name" type="string">
+  Last name
+</ResponseField>
+
+<ResponseField name="avatar" type="string">
+  Avatar URL
+</ResponseField>
+
+<ResponseField name="tier" type="string" required>
+  User tier: `guest`, `free`, `pro`, `enterprise`
+</ResponseField>
+
+<ResponseField name="subscription_active" type="boolean" required>
+  Whether the user has an active subscription
+</ResponseField>
+
+<ResponseField name="is_admin" type="boolean" required>
+  Whether the user has admin privileges
+</ResponseField>
+
+<ResponseField name="mfa_enabled" type="boolean" required>
+  Whether MFA is enabled
+</ResponseField>
+
+<ResponseField name="created_at" type="timestamp" required>
+  Account creation timestamp
+</ResponseField>
+
+<ResponseField name="updated_at" type="timestamp" required>
+  Last update timestamp
+</ResponseField>
+
+<ResponseExample>
+```json 200 OK
+{
+  "id": "user_abc123",
+  "email": "user@example.com",
+  "username": "johndoe",
+  "name": "John Doe",
+  "first_name": "John",
+  "last_name": "Doe",
+  "avatar": "https://avatar.example.com/johndoe.jpg",
+  "tier": "pro",
+  "subscription_active": true,
+  "is_admin": false,
+  "mfa_enabled": true,
+  "created_at": "2024-01-01T00:00:00Z",
+  "updated_at": "2024-01-15T10:30:00Z"
+}
+```
+</ResponseExample>
+
+## User Tiers
+
+| Tier | Max Containers | Memory | CPU | Disk | Session Duration |
+|------|----------------|--------|-----|------|------------------|
+| Guest | 1 | 512 MB | 0.5 | 2 GB | 50 hours |
+| Free | 5 | 256 MB - 4 GB | 0.25 - 4 | 1 - 16 GB | 50 hours |
+| Pro | 10 | up to 4 GB | up to 4 | up to 20 GB | Unlimited |
+| Enterprise | 25 | up to 8 GB | up to 8 | up to 50 GB | Unlimited |
+
+## Authentication
+
+All API requests (except guest login and OAuth endpoints) require authentication via a JWT token:
+
+```bash
+Authorization: Bearer YOUR_TOKEN
+```
+
+### Token Claims
+
+JWT tokens include the following claims:
+
+- `user_id`: User ID
+- `email`: Email address
+- `username`: Username
+- `tier`: User tier
+- `guest`: Whether this is a guest session
+- `subscription_active`: Whether subscription is active
+- `exp`: Expiration timestamp
+- `iat`: Issued at timestamp
+
+### Token Expiration
+
+- **Guest tokens**: 50 hours
+- **Authenticated tokens**: 24 hours (default)
+- **API tokens**: No expiration (revocable)
+
+## API Tokens
+
+For programmatic access, generate long-lived API tokens:
+
+```bash
+POST /api/tokens
+```
+
+<ParamField body="name" type="string" required>
+  Token name for identification
+</ParamField>
+
+<ParamField body="scopes" type="array" required>
+  Permissions: `["read", "write"]` or `["agent"]`
+</ParamField>
+
+<ParamField body="expires_at" type="timestamp">
+  Optional expiration date
+</ParamField>
+
+<ResponseExample>
+```json 201 Created
+{
+  "id": "token_xyz789",
+  "token": "rexec_1234567890abcdefghijklmnopqrstuvwxyz",
+  "name": "my-api-token",
+  "scopes": ["read", "write"],
+  "created_at": "2024-01-15T10:30:00Z"
+}
+```
+</ResponseExample>
+
+<Warning>
+  API tokens are only shown once during creation. Save them securely. Lost tokens cannot be recovered.
+</Warning>

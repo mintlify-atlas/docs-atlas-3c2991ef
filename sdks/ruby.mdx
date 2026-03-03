@@ -1,0 +1,772 @@
+---
+title: Ruby SDK
+description: Official Ruby SDK for Rexec - Build container orchestration with idiomatic Ruby patterns
+---
+
+## Installation
+
+Install the Ruby SDK using gem:
+
+```bash
+gem install rexec
+```
+
+Or add to your `Gemfile`:
+
+```ruby
+gem 'rexec'
+```
+
+Then run `bundle install`.
+
+**Requirements:** Ruby 2.7 or later
+
+## Quick Start
+
+```ruby
+require 'rexec'
+
+# Create client
+client = Rexec::Client.new(
+  ENV['REXEC_URL'],
+  ENV['REXEC_TOKEN']
+)
+
+# Create a container
+container = client.containers.create('ubuntu:24.04',
+  name: 'my-sandbox'
+)
+puts "Created: #{container.id}"
+
+# Execute a command
+result = client.containers.exec(container.id, "echo 'Hello from Ruby!'")
+puts result.stdout
+
+# Clean up
+client.containers.delete(container.id)
+```
+
+## Client Initialization
+
+### Basic Client Creation
+
+```ruby
+require 'rexec'
+
+client = Rexec::Client.new(
+  'https://your-rexec-instance.com',
+  'your-api-token'
+)
+```
+
+### Using Module Method
+
+```ruby
+require 'rexec'
+
+client = Rexec.new(
+  ENV['REXEC_URL'],
+  ENV['REXEC_TOKEN']
+)
+```
+
+### With Custom Options
+
+```ruby
+client = Rexec::Client.new(
+  ENV['REXEC_URL'],
+  ENV['REXEC_TOKEN'],
+  timeout: 60,           # Request timeout in seconds
+  open_timeout: 10       # Connection timeout
+)
+```
+
+## Container Operations
+
+The `containers` service provides methods for managing sandboxed environments.
+
+### Create Container
+
+<CodeGroup>
+```ruby Basic
+container = client.containers.create('ubuntu:24.04')
+```
+
+```ruby With Options
+container = client.containers.create('node:20',
+  name: 'my-node-sandbox',
+  environment: {
+    'NODE_ENV' => 'production',
+    'API_KEY' => ENV['API_KEY']
+  },
+  labels: {
+    'project' => 'demo',
+    'owner' => 'engineering'
+  }
+)
+```
+
+```ruby Block Form
+container = client.containers.create('python:3.12') do |req|
+  req.name = 'ml-worker'
+  req.environment = {
+    'PYTHONPATH' => '/app',
+    'CUDA_VISIBLE_DEVICES' => '0'
+  }
+  req.labels = {
+    'type' => 'ml',
+    'gpu' => 'true'
+  }
+end
+```
+</CodeGroup>
+
+### List Containers
+
+```ruby
+containers = client.containers.list
+
+containers.each do |c|
+  puts "#{c.name}: #{c.status}"
+end
+```
+
+### Get Container
+
+```ruby
+begin
+  container = client.containers.get(container_id)
+  
+  puts "Container: #{container.name}"
+  puts "Status: #{container.status}"
+  puts "Created: #{container.created_at}"
+rescue Rexec::Error => e
+  puts "Error: #{e.message}"
+end
+```
+
+### Lifecycle Management
+
+<CodeGroup>
+```ruby Start
+client.containers.start(container_id)
+puts "Container started"
+```
+
+```ruby Stop
+client.containers.stop(container_id)
+puts "Container stopped"
+```
+
+```ruby Delete
+client.containers.delete(container_id)
+puts "Container deleted"
+```
+</CodeGroup>
+
+### Execute Commands
+
+```ruby
+# Execute a command
+result = client.containers.exec(container_id, "ls -la")
+
+if result.exit_code == 0
+  puts result.stdout
+else
+  puts "Error: #{result.stderr}"
+end
+
+# Execute with array syntax
+result = client.containers.exec(container_id, ['python', 'script.py'])
+```
+
+## File Operations
+
+The `files` service enables file management within containers.
+
+### List Files
+
+```ruby
+files = client.files.list(container_id, '/home')
+
+files.each do |f|
+  icon = f.dir? ? '📁' : '📄'
+  puts "#{icon} #{f.name} (#{f.size} bytes)"
+end
+```
+
+### Download Files
+
+```ruby
+# Download as string
+content = client.files.read(container_id, '/etc/passwd')
+puts content
+
+# Download as bytes
+data = client.files.download(container_id, '/etc/passwd')
+File.write('passwd.txt', data)
+```
+
+### Upload Files
+
+```ruby
+# Upload string content
+client.files.write(
+  container_id,
+  '/home/script.rb',
+  "puts 'hello world'"
+)
+
+# Upload from file
+content = File.read('local_file.txt')
+client.files.upload(container_id, '/home/remote.txt', content)
+```
+
+### Create Directory
+
+```ruby
+client.files.mkdir(container_id, '/home/mydir')
+puts "Directory created"
+```
+
+### Delete File
+
+```ruby
+client.files.delete(container_id, '/home/script.rb')
+puts "File deleted"
+```
+
+## Terminal Connections
+
+The `terminal` service provides WebSocket-based terminal access with full PTY support.
+
+### Connect to Terminal
+
+```ruby
+terminal = client.terminal.connect(container_id)
+```
+
+### Send Commands
+
+```ruby
+# Send a simple command
+terminal.write("ls -la\n")
+
+# Send multiple commands
+commands = [
+  "cd /app\n",
+  "bundle install\n",
+  "rails server\n"
+]
+
+commands.each do |cmd|
+  terminal.write(cmd)
+end
+```
+
+### Handle Output
+
+```ruby
+terminal.on_data do |data|
+  print data
+end
+
+terminal.on_close do
+  puts "\nTerminal disconnected"
+end
+
+terminal.on_error do |error|
+  puts "Error: #{error}"
+end
+```
+
+### Resize Terminal
+
+```ruby
+terminal.resize(150, 50)
+```
+
+### Close Connection
+
+```ruby
+terminal.close
+```
+
+## Error Handling
+
+The SDK provides structured error handling:
+
+```ruby
+require 'rexec'
+
+begin
+  container = client.containers.get('invalid-id')
+rescue Rexec::APIError => e
+  case e.status_code
+  when 404
+    puts "Container not found"
+  when 401
+    puts "Authentication failed"
+  else
+    puts "API Error #{e.status_code}: #{e.message}"
+  end
+rescue Rexec::ConnectionError => e
+  puts "Connection Error: #{e}"
+rescue Rexec::Error => e
+  puts "Error: #{e}"
+end
+```
+
+## Complete Examples
+
+### CI/CD Integration
+
+```ruby
+require 'rexec'
+
+def run_ci_tests(image, commands)
+  client = Rexec::Client.new(ENV['REXEC_URL'], ENV['REXEC_TOKEN'])
+  
+  # Create test container
+  container = client.containers.create(image,
+    environment: { 'CI' => 'true' }
+  )
+  
+  begin
+    client.containers.start(container.id)
+    
+    # Run each command
+    commands.each do |cmd|
+      result = client.containers.exec(container.id, cmd)
+      
+      if result.exit_code != 0
+        puts "Error: #{result.stderr}"
+        return false
+      end
+      
+      puts result.stdout
+    end
+    
+    true
+  ensure
+    client.containers.delete(container.id)
+  end
+end
+
+# Usage
+success = run_ci_tests('ruby:3.2', [
+  'bundle install',
+  'rspec'
+])
+
+exit(success ? 0 : 1)
+```
+
+### Automated Backup Script
+
+```ruby
+require 'rexec'
+
+client = Rexec::Client.new(ENV['REXEC_URL'], ENV['REXEC_TOKEN'])
+
+# Create a container with backup tools
+container = client.containers.create('ubuntu:24.04', 
+  name: 'backup-worker',
+  environment: {
+    'AWS_ACCESS_KEY_ID' => ENV['AWS_ACCESS_KEY_ID'],
+    'AWS_SECRET_ACCESS_KEY' => ENV['AWS_SECRET_ACCESS_KEY']
+  }
+)
+
+client.containers.start(container.id)
+
+begin
+  # Install AWS CLI
+  client.containers.exec(container.id, 'apt-get update && apt-get install -y awscli')
+  
+  # Run backup
+  result = client.containers.exec(
+    container.id,
+    'aws s3 sync /data s3://my-bucket/backup/'
+  )
+  
+  if result.exit_code == 0
+    puts "Backup completed successfully"
+  else
+    puts "Backup failed: #{result.stderr}"
+  end
+ensure
+  client.containers.delete(container.id)
+end
+```
+
+### WordPress Maintenance Automation
+
+```ruby
+require 'rexec'
+
+class WordPressMaintenance
+  def initialize
+    @client = Rexec::Client.new(ENV['REXEC_URL'], ENV['REXEC_TOKEN'])
+  end
+  
+  def update_plugins
+    container = @client.containers.create('wordpress:latest',
+      name: 'wp-maintenance',
+      environment: {
+        'WORDPRESS_DB_HOST' => ENV['DB_HOST'],
+        'WORDPRESS_DB_PASSWORD' => ENV['DB_PASSWORD']
+      }
+    )
+    
+    @client.containers.start(container.id)
+    
+    begin
+      # Update plugins
+      result = @client.containers.exec(
+        container.id,
+        'wp plugin update --all --allow-root'
+      )
+      
+      puts "Plugin updates: #{result.stdout}"
+      
+      # Update themes
+      result = @client.containers.exec(
+        container.id,
+        'wp theme update --all --allow-root'
+      )
+      
+      puts "Theme updates: #{result.stdout}"
+    ensure
+      @client.containers.delete(container.id)
+    end
+  end
+end
+
+maintenance = WordPressMaintenance.new
+maintenance.update_plugins
+```
+
+### Rails Application Testing
+
+```ruby
+require 'rexec'
+require 'minitest/autorun'
+
+class IntegrationTest < Minitest::Test
+  def setup
+    @client = Rexec::Client.new(
+      ENV['REXEC_URL'],
+      ENV['REXEC_TOKEN']
+    )
+    
+    @container = @client.containers.create('ruby:3.2',
+      labels: { 'test' => 'true' }
+    )
+    @client.containers.start(@container.id)
+  end
+  
+  def teardown
+    @client.containers.delete(@container.id)
+  end
+  
+  def test_ruby_version
+    result = @client.containers.exec(@container.id, 'ruby --version')
+    assert_equal 0, result.exit_code
+    assert_match /ruby 3\.2/, result.stdout
+  end
+  
+  def test_bundle_install
+    # Upload Gemfile
+    @client.files.write(
+      @container.id,
+      '/app/Gemfile',
+      "source 'https://rubygems.org'\ngem 'rails'"
+    )
+    
+    # Run bundle install
+    result = @client.containers.exec(
+      @container.id,
+      'cd /app && bundle install'
+    )
+    
+    assert_equal 0, result.exit_code
+  end
+end
+```
+
+### Interactive Development Environment
+
+```ruby
+require 'rexec'
+require 'io/console'
+
+def create_dev_environment(user_id)
+  client = Rexec::Client.new(ENV['REXEC_URL'], ENV['REXEC_TOKEN'])
+  
+  container = client.containers.create('ubuntu:24.04',
+    name: "dev-#{user_id}",
+    environment: {
+      'EDITOR' => 'vim',
+      'TERM' => 'xterm-256color'
+    },
+    labels: {
+      'user' => user_id,
+      'type' => 'development'
+    }
+  )
+  
+  client.containers.start(container.id)
+  
+  # Install dev tools
+  client.containers.exec(
+    container.id,
+    'apt-get update && apt-get install -y git vim curl'
+  )
+  
+  # Connect to interactive terminal
+  terminal = client.terminal.connect(container.id)
+  
+  terminal.on_data do |data|
+    print data
+  end
+  
+  terminal.on_close do
+    puts "\nDisconnected"
+    exit
+  end
+  
+  # Forward stdin to terminal
+  Thread.new do
+    STDIN.raw do |stdin|
+      loop do
+        char = stdin.getc
+        terminal.write(char)
+      end
+    end
+  end
+  
+  # Keep main thread alive
+  sleep
+end
+
+create_dev_environment('user123')
+```
+
+### Database Migration Runner
+
+```ruby
+require 'rexec'
+
+class MigrationRunner
+  def initialize
+    @client = Rexec::Client.new(ENV['REXEC_URL'], ENV['REXEC_TOKEN'])
+  end
+  
+  def run_migrations(database_type, migrations)
+    image = case database_type
+    when :postgres then 'postgres:16'
+    when :mysql then 'mysql:8'
+    when :mongodb then 'mongo:7'
+    else raise "Unknown database: #{database_type}"
+    end
+    
+    container = @client.containers.create(image,
+      environment: database_env(database_type)
+    )
+    
+    @client.containers.start(container.id)
+    
+    begin
+      # Wait for database to be ready
+      sleep 5
+      
+      # Upload migrations
+      migrations.each_with_index do |migration, i|
+        @client.files.write(
+          container.id,
+          "/migrations/#{i}_migration.sql",
+          migration
+        )
+      end
+      
+      # Run migrations
+      migrations.size.times do |i|
+        result = @client.containers.exec(
+          container.id,
+          run_migration_cmd(database_type, i)
+        )
+        
+        raise "Migration #{i} failed: #{result.stderr}" if result.exit_code != 0
+        
+        puts "Migration #{i} completed"
+      end
+    ensure
+      @client.containers.delete(container.id)
+    end
+  end
+  
+  private
+  
+  def database_env(type)
+    case type
+    when :postgres
+      { 'POSTGRES_PASSWORD' => 'test' }
+    when :mysql
+      { 'MYSQL_ROOT_PASSWORD' => 'test' }
+    else
+      {}
+    end
+  end
+  
+  def run_migration_cmd(type, index)
+    case type
+    when :postgres
+      "psql -U postgres -f /migrations/#{index}_migration.sql"
+    when :mysql
+      "mysql -u root -ptest < /migrations/#{index}_migration.sql"
+    end
+  end
+end
+
+runner = MigrationRunner.new
+runner.run_migrations(:postgres, [
+  "CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT);",
+  "CREATE INDEX idx_users_name ON users(name);"
+])
+```
+
+## API Reference
+
+### Rexec::Client
+
+```ruby
+class Rexec::Client
+  def initialize(base_url, token, **options)
+  
+  def containers # => ContainerService
+  def files      # => FileService
+  def terminal   # => TerminalService
+end
+```
+
+### Types
+
+<ParamField path="Container" type="class">
+  Container instance.
+  
+  <ParamField path="id" type="String">Container ID</ParamField>
+  <ParamField path="name" type="String">Container name</ParamField>
+  <ParamField path="image" type="String">Docker image</ParamField>
+  <ParamField path="status" type="String">Current status</ParamField>
+  <ParamField path="created_at" type="Time">Creation timestamp</ParamField>
+  <ParamField path="started_at" type="Time?">Start timestamp</ParamField>
+  <ParamField path="labels" type="Hash<String, String>">Container labels</ParamField>
+  <ParamField path="environment" type="Hash<String, String>">Environment variables</ParamField>
+</ParamField>
+
+<ParamField path="FileInfo" type="class">
+  File metadata.
+  
+  <ParamField path="name" type="String">File name</ParamField>
+  <ParamField path="path" type="String">Full path</ParamField>
+  <ParamField path="size" type="Integer">File size in bytes</ParamField>
+  <ParamField path="mode" type="String">File permissions</ParamField>
+  <ParamField path="mod_time" type="Time">Last modification time</ParamField>
+  <ParamField path="dir?" type="Boolean">Whether this is a directory</ParamField>
+</ParamField>
+
+<ParamField path="ExecResult" type="class">
+  Command execution result.
+  
+  <ParamField path="stdout" type="String">Standard output</ParamField>
+  <ParamField path="stderr" type="String">Standard error</ParamField>
+  <ParamField path="exit_code" type="Integer">Exit code</ParamField>
+</ParamField>
+
+### Services
+
+**ContainerService** - Access via `client.containers`
+- `list() -> Array<Container>` - List all containers
+- `get(id) -> Container` - Get container by ID
+- `create(image, **options) -> Container` - Create a container
+- `delete(id) -> nil` - Delete a container
+- `start(id) -> nil` - Start a container
+- `stop(id) -> nil` - Stop a container
+- `exec(id, command) -> ExecResult` - Execute a command
+
+**FileService** - Access via `client.files`
+- `list(container_id, path) -> Array<FileInfo>` - List files
+- `read(container_id, path) -> String` - Read file as string
+- `download(container_id, path) -> String` - Download file as bytes
+- `write(container_id, path, content) -> nil` - Write file
+- `upload(container_id, path, content) -> nil` - Upload file
+- `mkdir(container_id, path) -> nil` - Create directory
+- `delete(container_id, path) -> nil` - Delete a file
+
+**TerminalService** - Access via `client.terminal`
+- `connect(container_id, **options) -> Terminal` - Connect to terminal
+
+**Terminal** methods:
+- `write(data)` - Send data to terminal
+- `on_data { |data| }` - Register data handler
+- `on_close { }` - Register close handler
+- `on_error { |error| }` - Register error handler
+- `resize(cols, rows)` - Resize terminal
+- `close()` - Close connection
+
+## Best Practices
+
+<Note>
+**Use Blocks for Cleanup** - Use `begin...ensure` blocks to guarantee cleanup:
+```ruby
+container = client.containers.create('ubuntu:24.04')
+begin
+  # Use container
+ensure
+  client.containers.delete(container.id)
+end
+```
+</Note>
+
+<Note>
+**Handle Exceptions** - Catch specific exceptions for better error handling:
+```ruby
+rescue Rexec::APIError => e
+  # Handle API errors
+rescue Rexec::Error => e
+  # Handle general errors
+end
+```
+</Note>
+
+<Note>
+**Use Environment Variables** - Never hardcode credentials:
+```ruby
+client = Rexec::Client.new(ENV['REXEC_URL'], ENV['REXEC_TOKEN'])
+```
+</Note>
+
+<Note>
+**Leverage Ruby Idioms** - Use blocks, symbols, and Ruby patterns:
+```ruby
+files.select(&:dir?).each { |d| puts d.name }
+```
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Java SDK" icon="java" href="/sdks/java">
+    Explore the Java SDK
+  </Card>
+  <Card title="Python SDK" icon="python" href="/sdks/python">
+    Check out the Python SDK
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    View complete API documentation
+  </Card>
+  <Card title="Examples" icon="code" href="/examples">
+    Browse more code examples
+  </Card>
+</CardGroup>

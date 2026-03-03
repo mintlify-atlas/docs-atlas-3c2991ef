@@ -1,0 +1,354 @@
+---
+title: CLI Installation
+description: Install the Rexec CLI on Linux, macOS, or Windows to manage cloud terminals from your command line
+---
+
+The Rexec CLI (`rexec`) is a command-line interface for managing cloud terminal environments. It provides full access to all Rexec features including terminal management, snippets, and agent mode.
+
+## Installation Methods
+
+Choose the installation method that works best for your platform:
+
+<Tabs>
+  <Tab title="GitHub Releases">
+    Download pre-built binaries directly from GitHub releases.
+
+    <CodeGroup>
+    ```bash Linux (amd64)
+    curl -sSL https://github.com/rexec/rexec/releases/latest/download/rexec-linux-amd64 -o /usr/local/bin/rexec
+    chmod +x /usr/local/bin/rexec
+    ```
+
+    ```bash Linux (arm64)
+    curl -sSL https://github.com/rexec/rexec/releases/latest/download/rexec-linux-arm64 -o /usr/local/bin/rexec
+    chmod +x /usr/local/bin/rexec
+    ```
+
+    ```bash macOS (Intel)
+    curl -sSL https://github.com/rexec/rexec/releases/latest/download/rexec-darwin-amd64 -o /usr/local/bin/rexec
+    chmod +x /usr/local/bin/rexec
+    ```
+
+    ```bash macOS (Apple Silicon)
+    curl -sSL https://github.com/rexec/rexec/releases/latest/download/rexec-darwin-arm64 -o /usr/local/bin/rexec
+    chmod +x /usr/local/bin/rexec
+    ```
+    </CodeGroup>
+  </Tab>
+
+  <Tab title="Go Install">
+    If you have Go 1.22+ installed, you can install the CLI directly:
+
+    ```bash
+    go install github.com/rexec/rexec/cmd/rexec-cli@latest
+    ```
+
+    <Note>
+      The binary will be installed to `$GOPATH/bin` (typically `~/go/bin`). Make sure this directory is in your PATH.
+    </Note>
+  </Tab>
+
+  <Tab title="Homebrew (macOS)">
+    Install using Homebrew on macOS:
+
+    ```bash
+    brew install rexec/tap/rexec
+    ```
+
+    This is the recommended method for macOS users as it handles updates automatically.
+  </Tab>
+</Tabs>
+
+## Verify Installation
+
+Confirm the CLI is installed correctly:
+
+```bash
+rexec version
+```
+
+You should see output similar to:
+
+```
+rexec-cli v1.0.0
+OS: darwin/arm64
+```
+
+## First-Time Setup
+
+<Steps>
+  <Step title="Login to Rexec">
+    Authenticate with your Rexec account:
+
+    ```bash
+    rexec login
+    ```
+
+    This will open your browser to complete the login flow. If the browser doesn't open automatically, you'll see a URL to visit manually.
+
+    <Tip>
+      You can also login with an API token directly:
+      ```bash
+      rexec login --token "your-api-token"
+      ```
+    </Tip>
+  </Step>
+
+  <Step title="Verify Your Account">
+    Check that you're logged in successfully:
+
+    ```bash
+    rexec whoami
+    ```
+
+    Output:
+    ```
+    User Profile
+    ─────────────────────────────
+      Username: johndoe
+      Email:    john@example.com
+      Tier:     pro
+      Host:     https://rexec.pipeops.io
+    ```
+  </Step>
+
+  <Step title="List Your Terminals">
+    View your existing terminals:
+
+    ```bash
+    rexec ls
+    ```
+
+    If this is your first time, you won't have any terminals yet. Let's create one!
+  </Step>
+
+  <Step title="Create Your First Terminal">
+    Create a new cloud terminal:
+
+    ```bash
+    rexec create --name mydev --image ubuntu:22.04
+    ```
+
+    Output:
+    ```
+    ✓ Terminal created
+      ID:    abc123def456
+      Name:  mydev
+      Image: ubuntu:22.04
+
+    Connect with: rexec connect abc123
+    ```
+  </Step>
+
+  <Step title="Connect to Your Terminal">
+    Connect to the terminal you just created:
+
+    ```bash
+    rexec connect abc123
+    ```
+
+    You'll be dropped into an interactive shell inside your cloud terminal!
+
+    <Info>
+      Press `Ctrl+]` or double-tap `Ctrl+C` within 1 second to disconnect from the terminal.
+    </Info>
+  </Step>
+</Steps>
+
+## Interactive Mode
+
+For a visual dashboard experience, launch the TUI (Text User Interface):
+
+```bash
+rexec -i
+```
+
+The TUI provides:
+- Visual terminal list with status indicators
+- Quick connect with number keys (1-9)
+- Create, start, stop terminals
+- Browse and run snippets
+
+## Configuration
+
+### Config File Location
+
+The CLI stores configuration at `~/.rexec/config.json`:
+
+```json
+{
+  "host": "https://rexec.pipeops.io",
+  "token": "your-token",
+  "username": "johndoe",
+  "email": "john@example.com",
+  "tier": "pro"
+}
+```
+
+### Environment Variables
+
+You can override configuration with environment variables:
+
+<ParamField path="REXEC_HOST" type="string">
+  API host URL (default: `https://rexec.pipeops.io`)
+  
+  ```bash
+  export REXEC_HOST="https://custom.rexec.io"
+  ```
+</ParamField>
+
+<ParamField path="REXEC_TOKEN" type="string">
+  Authentication token (overrides saved credentials)
+  
+  ```bash
+  export REXEC_TOKEN="your-api-token"
+  rexec whoami
+  ```
+</ParamField>
+
+<ParamField path="REXEC_TUI_PATH" type="string">
+  Custom path to the TUI binary
+  
+  ```bash
+  export REXEC_TUI_PATH="/custom/path/rexec-tui"
+  ```
+</ParamField>
+
+## Shell Completion
+
+Enable tab completion for your shell:
+
+<CodeGroup>
+```bash Bash
+rexec completion bash > /etc/bash_completion.d/rexec
+```
+
+```bash Zsh
+rexec completion zsh > ~/.zsh/completions/_rexec
+```
+
+```bash Fish
+rexec completion fish > ~/.config/fish/completions/rexec.fish
+```
+</CodeGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Command not found after installation">
+    Make sure `/usr/local/bin` is in your PATH:
+
+    ```bash
+    echo $PATH
+    ```
+
+    If it's not there, add it to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.):
+
+    ```bash
+    export PATH="/usr/local/bin:$PATH"
+    ```
+  </Accordion>
+
+  <Accordion title="Permission denied when installing">
+    You may need sudo privileges to write to `/usr/local/bin`:
+
+    ```bash
+    sudo curl -sSL https://github.com/rexec/rexec/releases/latest/download/rexec-linux-amd64 -o /usr/local/bin/rexec
+    sudo chmod +x /usr/local/bin/rexec
+    ```
+
+    Alternatively, install to your home directory:
+
+    ```bash
+    mkdir -p ~/.local/bin
+    curl -sSL https://github.com/rexec/rexec/releases/latest/download/rexec-linux-amd64 -o ~/.local/bin/rexec
+    chmod +x ~/.local/bin/rexec
+    export PATH="$HOME/.local/bin:$PATH"
+    ```
+  </Accordion>
+
+  <Accordion title="Login fails with 'Not logged in' error">
+    If you see authentication errors, try:
+
+    1. Re-login with a fresh token:
+       ```bash
+       rexec logout
+       rexec login
+       ```
+
+    2. Verify your credentials:
+       ```bash
+       rexec whoami
+       ```
+
+    3. Check if your token is valid:
+       ```bash
+       curl -H "Authorization: Bearer $REXEC_TOKEN" https://rexec.pipeops.io/api/profile
+       ```
+  </Accordion>
+
+  <Accordion title="TUI not launching">
+    If `rexec -i` doesn't work:
+
+    1. Check if the TUI binary exists:
+       ```bash
+       which rexec-tui
+       ```
+
+    2. Install it separately:
+       ```bash
+       curl -sSL https://github.com/rexec/rexec/releases/latest/download/rexec-tui-linux-amd64 -o /usr/local/bin/rexec-tui
+       chmod +x /usr/local/bin/rexec-tui
+       ```
+
+    3. Set a custom path:
+       ```bash
+       export REXEC_TUI_PATH=/path/to/rexec-tui
+       rexec -i
+       ```
+  </Accordion>
+</AccordionGroup>
+
+## Updating the CLI
+
+To update to the latest version:
+
+<Tabs>
+  <Tab title="GitHub Releases">
+    Re-run the installation command to download the latest release:
+
+    ```bash
+    curl -sSL https://github.com/rexec/rexec/releases/latest/download/rexec-linux-amd64 -o /usr/local/bin/rexec
+    chmod +x /usr/local/bin/rexec
+    ```
+  </Tab>
+
+  <Tab title="Go Install">
+    ```bash
+    go install github.com/rexec/rexec/cmd/rexec-cli@latest
+    ```
+  </Tab>
+
+  <Tab title="Homebrew">
+    ```bash
+    brew upgrade rexec
+    ```
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/cli/authentication">
+    Learn about login, logout, and API tokens
+  </Card>
+  <Card title="Terminal Management" icon="terminal" href="/cli/terminal-management">
+    Create, connect, and manage terminals
+  </Card>
+  <Card title="File Operations" icon="folder" href="/cli/file-operations">
+    Upload, download, and manage files
+  </Card>
+  <Card title="Snippets" icon="code" href="/cli/snippets">
+    Save and run command snippets
+  </Card>
+</CardGroup>

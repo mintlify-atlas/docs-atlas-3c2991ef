@@ -1,0 +1,646 @@
+---
+title: 'PaaS Deployment'
+description: 'Deploy Rexec on Railway, PipeOps, Render, Fly.io, and other platform services'
+---
+
+## Overview
+
+This guide explains how to deploy Rexec on Platform-as-a-Service (PaaS) providers where running privileged containers is not possible. Instead of using a local Docker daemon, Rexec connects to a remote Docker host over TLS.
+
+## Architecture
+
+```
+┌─────────────────────┐       TLS/TCP        ┌──────────────────────┐
+│  PaaS (Rexec API)   │ ───────────────────> │  Docker Host VM      │
+│  - Railway          │      Port 2376       │  - Hetzner           │
+│  - PipeOps          │                      │  - DigitalOcean      │
+│  - Render           │                      │  - Fly.io            │
+│  - Fly.io           │                      │  [User Containers]   │
+└─────────────────────┘                      └──────────────────────┘
+         │
+         │
+         v
+┌─────────────────────┐
+│  PostgreSQL/Redis   │
+│  - Supabase         │
+│  - Railway          │
+│  - Upstash          │
+└─────────────────────┘
+```
+
+## Prerequisites
+
+<Steps>
+  <Step title="Choose your PaaS provider">
+    Supported platforms:
+    - **Railway** - Easiest deployment, built-in PostgreSQL
+    - **PipeOps** - Developer-friendly, auto-scaling
+    - **Render** - Simple, free tier available
+    - **Fly.io** - Global edge deployment
+    - **Heroku** - Traditional PaaS
+  </Step>
+  
+  <Step title="Provision a Docker host VM">
+    You'll need a Linux VM to run Docker. Recommended providers:
+    - **Hetzner Cloud** - CX22 (~€4.50/month)
+    - **DigitalOcean** - Basic Droplet (~$6/month)
+    - **Linode** - Shared CPU (~$5/month)
+    - **Fly.io** - Shared CPU (~$7/month)
+  </Step>
+  
+  <Step title="PostgreSQL and Redis">
+    Most PaaS providers offer managed databases:
+    - **Railway** - Built-in PostgreSQL
+    - **Supabase** - Free PostgreSQL tier
+    - **Upstash** - Serverless Redis
+    - **Railway/Render** - Redis add-ons
+  </Step>
+</Steps>
+
+## Step 1: Set Up Docker Host
+
+### Option A: Automated Setup (Recommended)
+
+Run this script on a fresh Ubuntu/Debian VM:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PipeOpsHQ/rexec/main/docker/docker-host/setup.sh | sudo bash
+```
+
+This script will:
+1. Install Docker Engine
+2. Generate TLS certificates
+3. Configure Docker daemon for secure remote access
+4. Open firewall port 2376
+5. Output all required environment variables
+
+### Option B: Manual Setup
+
+<Steps>
+  <Step title="Install Docker">
+    On your VM:
+    
+    ```bash
+    curl -fsSL https://get.docker.com | sudo sh
+    sudo systemctl enable docker
+    sudo systemctl start docker
+    ```
+  </Step>
+  
+  <Step title="Generate TLS certificates">
+    Use the included TLS setup script:
+    
+    ```bash
+    # Replace with your VM's public IP
+    sudo ./scripts/setup-docker-tls.sh YOUR_VM_PUBLIC_IP
+    ```
+    
+    This generates:
+    - `ca.pem` - CA certificate
+    - `cert.pem` - Client certificate
+    - `key.pem` - Client private key
+    - `server-cert.pem` - Server certificate
+    - `server-key.pem` - Server private key
+    
+    <Note>
+      Save the client certificates (`ca.pem`, `cert.pem`, `key.pem`) - you'll need them for the PaaS deployment.
+    </Note>
+  </Step>
+  
+  <Step title="Configure Docker daemon">
+    Create `/etc/docker/daemon.json`:
+    
+    ```json /etc/docker/daemon.json
+    {
+      "hosts": ["unix:///var/run/docker.sock", "tcp://0.0.0.0:2376"],
+      "tls": true,
+      "tlscacert": "/etc/docker/certs/ca.pem",
+      "tlscert": "/etc/docker/certs/server-cert.pem",
+      "tlskey": "/etc/docker/certs/server-key.pem",
+      "tlsverify": true
+    }
+    ```
+  </Step>
+  
+  <Step title="Create systemd override">
+    Create `/etc/systemd/system/docker.service.d/override.conf`:
+    
+    ```ini
+    [Service]
+    ExecStart=
+    ExecStart=/usr/bin/dockerd
+    ```
+  </Step>
+  
+  <Step title="Restart Docker">
+    ```bash
+    sudo systemctl daemon-reload
+    sudo systemctl restart docker
+    ```
+  </Step>
+  
+  <Step title="Open firewall port">
+    ```bash
+    sudo ufw allow 2376/tcp
+    sudo ufw enable
+    ```
+  </Step>
+  
+  <Step title="Test connection">
+    Verify Docker is listening on port 2376:
+    
+    ```bash
+    sudo netstat -tlnp | grep 2376
+    docker --tlsverify --tlscacert=ca.pem --tlscert=cert.pem --tlskey=key.pem -H tcp://127.0.0.1:2376 version
+    ```
+  </Step>
+</Steps>
+
+## Step 2: Deploy to PaaS
+
+### Railway
+
+<Steps>
+  <Step title="Create new project">
+    1. Go to [railway.app](https://railway.app)
+    2. Click **New Project** → **Deploy from GitHub repo**
+    3. Connect your forked Rexec repository
+  </Step>
+  
+  <Step title="Add PostgreSQL database">
+    1. Click **New** → **Database** → **PostgreSQL**
+    2. Railway will automatically set `DATABASE_URL`
+  </Step>
+  
+  <Step title="Add Redis (optional but recommended)">
+    1. Click **New** → **Database** → **Redis**
+    2. Railway will automatically set `REDIS_URL`
+  </Step>
+  
+  <Step title="Configure environment variables">
+    In your Rexec service settings, add:
+    
+    ```bash
+    # Security (generate with: openssl rand -hex 32)
+    JWT_SECRET=your-generated-secret-here
+    
+    # Remote Docker configuration
+    DOCKER_HOST=tcp://YOUR_VM_IP:2376
+    DOCKER_TLS_VERIFY=1
+    DOCKER_CA_CERT=<paste contents of ca.pem>
+    DOCKER_CLIENT_CERT=<paste contents of cert.pem>
+    DOCKER_CLIENT_KEY=<paste contents of key.pem>
+    
+    # Server configuration
+    GIN_MODE=release
+    LOG_LEVEL=info
+    ```
+    
+    <Warning>
+      When pasting certificate contents, ensure newlines are preserved. Railway handles multi-line values correctly.
+    </Warning>
+  </Step>
+  
+  <Step title="Deploy">
+    Railway will automatically build and deploy from your Dockerfile.
+    
+    Monitor deployment logs for any errors.
+  </Step>
+  
+  <Step title="Add custom domain (optional)">
+    1. Go to **Settings** → **Domains**
+    2. Click **Generate Domain** or add your custom domain
+    3. Update `BASE_URL` environment variable
+  </Step>
+</Steps>
+
+### PipeOps
+
+<Steps>
+  <Step title="Connect repository">
+    1. Sign in to [pipeops.io](https://pipeops.io)
+    2. Create new project
+    3. Connect your GitHub repository
+  </Step>
+  
+  <Step title="Configure build">
+    - **Build Method**: Dockerfile
+    - **Dockerfile Path**: `Dockerfile`
+    - **Port**: 8080
+  </Step>
+  
+  <Step title="Add databases">
+    Add PostgreSQL and Redis from the PipeOps marketplace.
+  </Step>
+  
+  <Step title="Set environment variables">
+    Add the same variables as Railway (see above).
+  </Step>
+  
+  <Step title="Deploy">
+    Click **Deploy** to start the deployment process.
+  </Step>
+</Steps>
+
+### Render
+
+<Steps>
+  <Step title="Create new Web Service">
+    1. Go to [render.com](https://render.com)
+    2. Click **New** → **Web Service**
+    3. Connect your repository
+  </Step>
+  
+  <Step title="Configure service">
+    - **Environment**: Docker
+    - **Dockerfile Path**: `Dockerfile`
+    - **Plan**: Starter ($7/month minimum for custom domains)
+  </Step>
+  
+  <Step title="Add PostgreSQL">
+    1. Create a new PostgreSQL database
+    2. Copy the **Internal Database URL**
+    3. Set as `DATABASE_URL` environment variable
+  </Step>
+  
+  <Step title="Add Redis">
+    1. Create a new Redis instance
+    2. Copy the **Internal Redis URL**
+    3. Set as `REDIS_URL` environment variable
+  </Step>
+  
+  <Step title="Set environment variables">
+    Same as Railway configuration above.
+  </Step>
+  
+  <Step title="Deploy">
+    Render will automatically build and deploy.
+  </Step>
+</Steps>
+
+### Fly.io
+
+<Steps>
+  <Step title="Install flyctl">
+    ```bash
+    curl -L https://fly.io/install.sh | sh
+    flyctl auth login
+    ```
+  </Step>
+  
+  <Step title="Launch app">
+    ```bash
+    flyctl launch --no-deploy
+    ```
+    
+    This creates `fly.toml` configuration file.
+  </Step>
+  
+  <Step title="Provision PostgreSQL">
+    ```bash
+    flyctl postgres create --name rexec-db
+    flyctl postgres attach rexec-db
+    ```
+  </Step>
+  
+  <Step title="Provision Redis">
+    ```bash
+    flyctl redis create --name rexec-redis
+    flyctl redis attach rexec-redis
+    ```
+  </Step>
+  
+  <Step title="Set secrets">
+    ```bash
+    # Generate JWT secret
+    flyctl secrets set JWT_SECRET="$(openssl rand -hex 32)"
+    
+    # Docker configuration
+    flyctl secrets set DOCKER_HOST="tcp://YOUR_VM_IP:2376"
+    flyctl secrets set DOCKER_TLS_VERIFY="1"
+    flyctl secrets set DOCKER_CA_CERT="$(cat ca.pem)"
+    flyctl secrets set DOCKER_CLIENT_CERT="$(cat cert.pem)"
+    flyctl secrets set DOCKER_CLIENT_KEY="$(cat key.pem)"
+    
+    # Server configuration
+    flyctl secrets set GIN_MODE="release"
+    ```
+  </Step>
+  
+  <Step title="Update fly.toml">
+    ```toml fly.toml
+    app = "your-rexec-app"
+    
+    [build]
+      dockerfile = "Dockerfile"
+    
+    [env]
+      PORT = "8080"
+    
+    [[services]]
+      internal_port = 8080
+      protocol = "tcp"
+    
+      [[services.ports]]
+        handlers = ["http"]
+        port = 80
+        force_https = true
+    
+      [[services.ports]]
+        handlers = ["tls", "http"]
+        port = 443
+    
+      [services.concurrency]
+        type = "connections"
+        hard_limit = 25
+        soft_limit = 20
+    ```
+  </Step>
+  
+  <Step title="Deploy">
+    ```bash
+    flyctl deploy
+    ```
+  </Step>
+</Steps>
+
+## Environment Variables Reference
+
+All PaaS deployments require these environment variables:
+
+### Required Variables
+
+<ParamField path="JWT_SECRET" type="string" required>
+  Secret for signing JWT tokens. Generate with:
+  ```bash
+  openssl rand -hex 32
+  ```
+</ParamField>
+
+<ParamField path="DATABASE_URL" type="string" required>
+  PostgreSQL connection string:
+  ```
+  postgres://user:password@host:5432/database?sslmode=require
+  ```
+</ParamField>
+
+<ParamField path="DOCKER_HOST" type="string" required>
+  Remote Docker daemon endpoint:
+  ```
+  tcp://YOUR_VM_IP:2376
+  ```
+</ParamField>
+
+<ParamField path="DOCKER_TLS_VERIFY" type="string" required>
+  Must be set to `1` to enable TLS verification.
+</ParamField>
+
+<ParamField path="DOCKER_CA_CERT" type="string" required>
+  Contents of `ca.pem` certificate file.
+</ParamField>
+
+<ParamField path="DOCKER_CLIENT_CERT" type="string" required>
+  Contents of `cert.pem` certificate file.
+</ParamField>
+
+<ParamField path="DOCKER_CLIENT_KEY" type="string" required>
+  Contents of `key.pem` private key file.
+</ParamField>
+
+### Optional Variables
+
+<ParamField path="REDIS_URL" type="string">
+  Redis connection string (highly recommended for production):
+  ```
+  redis://default:password@host:6379
+  ```
+</ParamField>
+
+<ParamField path="GIN_MODE" type="string" default="debug">
+  Set to `release` for production deployments.
+</ParamField>
+
+<ParamField path="LOG_LEVEL" type="string" default="info">
+  Logging level: `debug`, `info`, `warn`, `error`.
+</ParamField>
+
+<ParamField path="STRIPE_SECRET_KEY" type="string">
+  Stripe API key for billing features.
+</ParamField>
+
+## Cost Estimation
+
+Estimated monthly costs for a basic production deployment:
+
+| Component | Provider | Cost/Month |
+|-----------|----------|------------|
+| **PaaS (Rexec API)** | Railway | $5-10 |
+| | PipeOps | $5-15 |
+| | Render Starter | $7 |
+| | Fly.io | $0-10 |
+| **Docker Host VM** | Hetzner CX22 | €4.50 (~$5) |
+| | DigitalOcean Basic | $6 |
+| | Linode Shared | $5 |
+| | Fly.io Shared CPU | $7 |
+| **PostgreSQL** | Railway | $5 |
+| | Supabase | $0 (free tier) |
+| | Render | $7 |
+| **Redis** | Upstash | $0 (free tier) |
+| | Railway | $5 |
+| | Render | $7 |
+
+**Total: ~$15-30/month** for a basic production setup
+
+## Health Checks
+
+After deployment, verify your setup:
+
+```bash
+# Replace with your app URL
+curl https://your-app.railway.app/health
+```
+
+Expected response:
+```json
+{
+  "status": "ok",
+  "database": "connected",
+  "docker": "connected",
+  "version": "v1.0.0"
+}
+```
+
+## Security Best Practices
+
+<Warning>
+  Always use TLS for Docker connections. Never expose Docker on port 2375 without TLS.
+</Warning>
+
+### Docker Host Security
+
+1. **Firewall rules**: Restrict port 2376 to your PaaS provider's IP ranges
+2. **Certificate rotation**: Regenerate TLS certificates every 90 days
+3. **Resource limits**: Configure Docker to prevent resource exhaustion
+4. **Monitoring**: Set up alerts for unusual Docker API activity
+5. **Updates**: Keep Docker Engine updated
+
+### Application Security
+
+1. **Strong secrets**: Use cryptographically random JWT secrets
+2. **HTTPS only**: Use TLS/SSL for all connections
+3. **CORS**: Set `ALLOWED_ORIGINS` to your domain only
+4. **Logging**: Enable audit logging
+5. **Rate limiting**: Configure rate limits in your PaaS provider
+
+## Troubleshooting
+
+### Connection Refused to Docker Host
+
+<AccordionGroup>
+  <Accordion title="Check firewall">
+    ```bash
+    # On Docker host
+    sudo ufw status
+    sudo ufw allow 2376/tcp
+    ```
+  </Accordion>
+  
+  <Accordion title="Verify Docker is listening">
+    ```bash
+    sudo netstat -tlnp | grep 2376
+    ```
+    
+    Should show Docker listening on `0.0.0.0:2376`.
+  </Accordion>
+  
+  <Accordion title="Test from local machine">
+    ```bash
+    docker --tlsverify \
+      --tlscacert=ca.pem \
+      --tlscert=cert.pem \
+      --tlskey=key.pem \
+      -H tcp://YOUR_VM_IP:2376 \
+      version
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### TLS Handshake Failed
+
+<AccordionGroup>
+  <Accordion title="Verify certificates">
+    Ensure all three certificate variables are set correctly:
+    - `DOCKER_CA_CERT`
+    - `DOCKER_CLIENT_CERT`
+    - `DOCKER_CLIENT_KEY`
+  </Accordion>
+  
+  <Accordion title="Check certificate expiry">
+    ```bash
+    openssl x509 -in cert.pem -noout -dates
+    ```
+  </Accordion>
+  
+  <Accordion title="Regenerate certificates">
+    If certificates are expired or invalid:
+    ```bash
+    sudo ./scripts/setup-docker-tls.sh YOUR_VM_IP
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Database Connection Failed
+
+<AccordionGroup>
+  <Accordion title="Verify DATABASE_URL format">
+    Ensure the URL includes SSL mode:
+    ```
+    postgres://user:pass@host:5432/db?sslmode=require
+    ```
+  </Accordion>
+  
+  <Accordion title="Check database logs">
+    View logs in your PaaS dashboard to see connection errors.
+  </Accordion>
+  
+  <Accordion title="Test connection manually">
+    ```bash
+    psql "$DATABASE_URL"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Container Creation Fails
+
+<AccordionGroup>
+  <Accordion title="Check Docker host resources">
+    ```bash
+    # On Docker host
+    docker system df
+    docker system prune -a
+    ```
+  </Accordion>
+  
+  <Accordion title="View Docker daemon logs">
+    ```bash
+    sudo journalctl -u docker -f
+    ```
+  </Accordion>
+  
+  <Accordion title="Verify Docker network">
+    ```bash
+    docker network ls
+    docker network create rexec-network
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Monitoring & Logging
+
+### Application Logs
+
+View logs in your PaaS dashboard:
+
+- **Railway**: Deployments → Logs tab
+- **Render**: Logs tab
+- **Fly.io**: `flyctl logs`
+
+### Docker Host Monitoring
+
+Set up monitoring on your Docker host:
+
+```bash
+# Install monitoring tools
+sudo apt install htop iotop nethogs
+
+# View Docker logs
+sudo journalctl -u docker -f
+
+# Monitor container resources
+watch docker stats
+```
+
+## Scaling
+
+### Horizontal Scaling (Multiple API Instances)
+
+1. **Redis required**: Ensure `REDIS_URL` is set for session sharing
+2. **Load balancer**: Use your PaaS provider's load balancing
+3. **Database connection pooling**: Configure PostgreSQL connection limits
+
+### Vertical Scaling (More Resources)
+
+1. **Docker host**: Upgrade to larger VM
+2. **PaaS**: Increase memory/CPU allocation
+3. **Database**: Upgrade to higher tier
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/deployment/configuration">
+    Explore all environment variables and advanced configuration
+  </Card>
+  <Card title="Docker Compose" icon="docker" href="/deployment/docker-compose">
+    Try local deployment for testing and development
+  </Card>
+</CardGroup>

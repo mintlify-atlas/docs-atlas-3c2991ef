@@ -1,0 +1,567 @@
+---
+title: Terminal Management
+description: Create, connect, start, stop, and delete cloud terminals using the Rexec CLI
+---
+
+Manage your cloud terminal environments with powerful CLI commands. Create terminals with custom images, connect interactively, and control their lifecycle.
+
+## Listing Terminals
+
+View all your terminals:
+
+```bash
+rexec ls
+# or
+rexec list
+```
+
+**Example output:**
+
+```
+Terminals
+─────────────────────────────────────────────────────────────────────────────
+ID           NAME                 IMAGE           STATUS       ROLE
+─────────────────────────────────────────────────────────────────────────────
+abc123def... my-dev               ubuntu:22.04    running      devops
+def456ghi... staging-server       alpine:latest   stopped      default
+ghi789jkl... data-analysis        python:3.11     running      data
+```
+
+<Info>
+  Terminal IDs are shortened for display. You can use the short ID (first 12 characters) for all commands.
+</Info>
+
+## Creating Terminals
+
+### Basic Terminal
+
+Create a basic Ubuntu terminal:
+
+```bash
+rexec create --name mydev
+```
+
+This creates a terminal with default settings:
+- **Image:** ubuntu:22.04
+- **Role:** default
+- **Memory:** 512MB
+- **CPU:** 0.5 cores
+
+### Custom Terminal
+
+Create a terminal with custom specifications:
+
+```bash
+rexec create \
+  --name k8s-admin \
+  --role devops \
+  --memory 1g \
+  --cpu 1.0
+```
+
+**Output:**
+
+```
+Creating terminal...
+
+✓ Terminal created
+  ID:    abc123def456
+  Name:  k8s-admin
+  Image: ubuntu:22.04
+
+Connect with: rexec connect abc123
+```
+
+### Create Options
+
+<ParamField path="--name" type="string" default="auto-generated">
+  Terminal name (must be unique)
+  
+  ```bash
+  rexec create --name production-api
+  ```
+  
+  If not specified, a name is auto-generated like `terminal-1709510400`
+</ParamField>
+
+<ParamField path="--image" type="string" default="ubuntu">
+  Container image to use
+  
+  **Built-in images:**
+  - `ubuntu` (default: ubuntu:22.04)
+  - `debian`
+  - `alpine`
+  - `arch`
+  
+  **Custom images:**
+  ```bash
+  rexec create --name nodejs --image node:20-alpine
+  rexec create --name python --image python:3.11-slim
+  ```
+</ParamField>
+
+<ParamField path="--role" type="string" default="default">
+  Environment role (determines pre-installed tools)
+  
+  Available roles:
+  - `default` - Basic terminal
+  - `devops` - Docker, kubectl, terraform, helm
+  - `fullstack` - Node.js, Python, PostgreSQL, Redis
+  - `backend` - Language runtimes, databases
+  - `frontend` - Node.js, npm, yarn, build tools
+  - `data` - Python, Jupyter, pandas, numpy, matplotlib
+  - `security` - nmap, metasploit, wireshark, etc.
+  
+  ```bash
+  rexec create --name jupyter --role data
+  ```
+</ParamField>
+
+<ParamField path="--memory" type="string" default="512m">
+  Memory limit
+  
+  **Supported units:** `m` (MB), `g` (GB)
+  
+  ```bash
+  rexec create --memory 2g      # 2 GB
+  rexec create --memory 1024m   # 1024 MB
+  ```
+</ParamField>
+
+<ParamField path="--cpu" type="string" default="0.5">
+  CPU cores (can be fractional)
+  
+  **Supported formats:**
+  - Decimal: `0.5`, `1.0`, `2.5`
+  - Millicores: `500m`, `1000m`, `2500m`
+  
+  ```bash
+  rexec create --cpu 1.5     # 1.5 cores
+  rexec create --cpu 750m    # 0.75 cores
+  ```
+</ParamField>
+
+### Role Examples
+
+<CodeGroup>
+```bash DevOps Environment
+rexec create \
+  --name k8s-cluster \
+  --role devops \
+  --memory 2g \
+  --cpu 2.0
+
+# Pre-installed: docker, kubectl, helm, terraform, ansible
+```
+
+```bash Data Science
+rexec create \
+  --name jupyter-lab \
+  --role data \
+  --image python:3.11 \
+  --memory 4g
+
+# Pre-installed: pandas, numpy, matplotlib, jupyter
+```
+
+```bash Full-Stack Dev
+rexec create \
+  --name webapp-dev \
+  --role fullstack \
+  --memory 1g
+
+# Pre-installed: node, python, postgres, redis, nginx
+```
+
+```bash Security Testing
+rexec create \
+  --name pentest \
+  --role security \
+  --memory 2g
+
+# Pre-installed: nmap, metasploit, burpsuite, wireshark
+```
+</CodeGroup>
+
+## Connecting to Terminals
+
+### Interactive Shell
+
+Connect to a terminal with a full interactive shell:
+
+```bash
+rexec connect <terminal-id>
+# or
+rexec ssh <terminal-id>
+```
+
+**Examples:**
+
+```bash
+# Using short ID
+rexec connect abc123
+
+# Using full ID
+rexec connect abc123def456-7890-...
+```
+
+**Connection features:**
+- Full PTY support (colors, cursor movement, etc.)
+- Automatic terminal resize handling
+- Disconnect with `Ctrl+]` or double `Ctrl+C` (within 1 second)
+
+<Tip>
+  You can use the short ID shown in `rexec ls` output. The CLI will automatically resolve it to the full ID.
+</Tip>
+
+### Disconnecting
+
+To disconnect from a terminal session:
+
+<Tabs>
+  <Tab title="Ctrl+]">
+    Press `Ctrl+]` (Control + Right Bracket)
+    
+    ```
+    Disconnected.
+    ```
+    
+    This is the recommended method as it cleanly disconnects without sending signals to the remote shell.
+  </Tab>
+  
+  <Tab title="Double Ctrl+C">
+    Press `Ctrl+C` twice within 1 second
+    
+    ```
+    ^C^C
+    Disconnected.
+    ```
+    
+    <Note>
+      Single `Ctrl+C` is forwarded to the remote shell (e.g., to cancel a running command). Double `Ctrl+C` disconnects locally.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Terminal Lifecycle
+
+### Start a Terminal
+
+Start a stopped terminal:
+
+```bash
+rexec start <terminal-id>
+```
+
+**Example:**
+
+```bash
+rexec start abc123
+```
+
+Output:
+```
+✓ Terminal started
+```
+
+<Info>
+  Starting a terminal boots the container. This may take a few seconds depending on the image size.
+</Info>
+
+### Stop a Terminal
+
+Stop a running terminal:
+
+```bash
+rexec stop <terminal-id>
+```
+
+**Example:**
+
+```bash
+rexec stop abc123
+```
+
+Output:
+```
+✓ Terminal stopped
+```
+
+<Warning>
+  Stopping a terminal preserves the container state but stops all running processes. Unsaved work may be lost.
+</Warning>
+
+### Delete a Terminal
+
+Permanently delete a terminal:
+
+```bash
+rexec rm <terminal-id>
+# or
+rexec delete <terminal-id>
+```
+
+**Example:**
+
+```bash
+rexec delete abc123
+```
+
+You'll be prompted to confirm:
+
+```
+Are you sure you want to delete terminal abc123? (y/N): y
+✓ Terminal deleted
+```
+
+<Warning>
+  Deletion is permanent and cannot be undone. All data in the terminal will be lost.
+</Warning>
+
+## Interactive TUI Dashboard
+
+For a visual interface, launch the TUI dashboard:
+
+```bash
+rexec -i
+# or
+rexec tui
+# or
+rexec dashboard
+```
+
+### TUI Features
+
+<CardGroup cols={2}>
+  <Card title="Visual Terminal List" icon="list">
+    See all terminals with status indicators (running/stopped)
+  </Card>
+  
+  <Card title="Quick Connect" icon="bolt">
+    Press 1-9 to instantly connect to terminals
+  </Card>
+  
+  <Card title="Create & Manage" icon="plus">
+    Create, start, stop terminals from the UI
+  </Card>
+  
+  <Card title="Browse Snippets" icon="code">
+    View and run saved command snippets
+  </Card>
+</CardGroup>
+
+### TUI Keyboard Controls
+
+| Key | Action |
+|-----|--------|
+| `1-9` | Connect to terminal N |
+| `c` | Create new terminal |
+| `s` | View snippets |
+| `r` | Refresh terminal list |
+| `q` | Quit dashboard |
+
+## Advanced Usage
+
+### Aliases for Quick Access
+
+Add to your shell config (`~/.bashrc`, `~/.zshrc`):
+
+```bash
+# Quick connect to favorite terminals
+alias dev="rexec connect abc123"
+alias staging="rexec connect def456"
+alias prod="rexec connect ghi789"
+
+# Create common environments
+alias newdev="rexec create --name dev-$(date +%s) --role devops --memory 1g"
+alias newdata="rexec create --name data-$(date +%s) --role data --memory 2g"
+
+# Quick dashboard
+alias r="rexec -i"
+```
+
+### SSH Integration
+
+Use Rexec as an SSH replacement in `~/.ssh/config`:
+
+```ssh-config
+Host rexec-*
+    ProxyCommand rexec connect %h
+```
+
+Then connect like SSH:
+
+```bash
+ssh rexec-abc123
+```
+
+### Scripted Terminal Management
+
+Create and connect in one script:
+
+```bash
+#!/bin/bash
+
+# Create a DevOps terminal
+OUTPUT=$(rexec create --name "ci-runner-$(date +%s)" --role devops --memory 2g)
+
+# Extract terminal ID
+TERMINAL_ID=$(echo "$OUTPUT" | grep "ID:" | awk '{print $2}')
+
+echo "Created terminal: $TERMINAL_ID"
+
+# Wait for terminal to be ready
+sleep 3
+
+# Connect to it
+rexec connect "$TERMINAL_ID"
+```
+
+## Terminal Status Indicators
+
+In `rexec ls` output, terminals have status indicators:
+
+| Status | Color | Meaning |
+|--------|-------|----------|
+| `running` | Green | Terminal is active and ready to connect |
+| `stopped` | Yellow | Terminal is stopped (can be started) |
+| `exited` | Yellow | Terminal exited (check logs for errors) |
+| `error` | Red | Terminal encountered an error |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Connection timeout">
+    If you can't connect to a terminal:
+
+    ```bash
+    # Check terminal status
+    rexec ls
+
+    # Try starting the terminal
+    rexec start abc123
+
+    # Wait a few seconds and try again
+    rexec connect abc123
+    ```
+
+    **Debug with verbose mode:**
+    ```bash
+    REXEC_DEBUG=1 rexec connect abc123
+    ```
+  </Accordion>
+
+  <Accordion title="Terminal not found">
+    If you see "No terminal found matching...":
+
+    ```bash
+    # List all terminals to get the correct ID
+    rexec ls
+
+    # Use the full or partial ID shown
+    rexec connect abc123def456
+    ```
+
+    <Note>
+      The CLI matches terminal IDs by prefix. Make sure you're using enough characters to uniquely identify the terminal.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Terminal resize not working">
+    If the terminal doesn't resize correctly:
+
+    1. Ensure your terminal emulator supports SIGWINCH
+    2. Try manual resize:
+       ```bash
+       printf '\e[8;50;120t'
+       ```
+    3. Reconnect to the terminal:
+       ```bash
+       # Disconnect (Ctrl+]) and reconnect
+       rexec connect abc123
+       ```
+  </Accordion>
+
+  <Accordion title="Out of memory/resources">
+    If terminal creation fails due to resource limits:
+
+    **Check your tier limits:**
+    ```bash
+    rexec whoami
+    ```
+
+    **Delete unused terminals:**
+    ```bash
+    rexec ls
+    rexec delete <old-terminal-id>
+    ```
+
+    **Upgrade your plan** for more resources at [https://rexec.pipeops.io/settings](https://rexec.pipeops.io/settings)
+  </Accordion>
+
+  <Accordion title="Custom image pull fails">
+    If a custom Docker image fails to pull:
+
+    **Use a valid image:**
+    ```bash
+    # Check image exists on Docker Hub
+    docker search <image-name>
+
+    # Use full image reference
+    rexec create --image docker.io/library/python:3.11-slim
+    ```
+
+    **Common working images:**
+    - `ubuntu:22.04`, `ubuntu:20.04`
+    - `debian:bookworm`, `debian:bullseye`
+    - `alpine:latest`
+    - `node:20`, `node:18-alpine`
+    - `python:3.11`, `python:3.11-slim`
+  </Accordion>
+</AccordionGroup>
+
+## Tips & Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Descriptive Names" icon="tag">
+    Name terminals by project/purpose:
+    ```bash
+    rexec create --name client-api-staging
+    ```
+  </Card>
+  
+  <Card title="Set Appropriate Resources" icon="gauge">
+    Match resources to workload:
+    - Small scripts: 512m, 0.5 CPU
+    - Web servers: 1g, 1.0 CPU
+    - Data processing: 4g+, 2.0+ CPU
+  </Card>
+  
+  <Card title="Stop Unused Terminals" icon="power-off">
+    Save resources by stopping idle terminals:
+    ```bash
+    rexec stop <terminal-id>
+    ```
+  </Card>
+  
+  <Card title="Use Roles for Quick Setup" icon="wand-magic-sparkles">
+    Roles install common tools automatically:
+    ```bash
+    rexec create --role devops
+    ```
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="File Operations" icon="folder" href="/cli/file-operations">
+    Upload and download files to terminals
+  </Card>
+  <Card title="Snippets" icon="code" href="/cli/snippets">
+    Save and run command snippets
+  </Card>
+  <Card title="Agent Mode" icon="server" href="/cli/agent-mode">
+    Connect your own machines as terminals
+  </Card>
+</CardGroup>

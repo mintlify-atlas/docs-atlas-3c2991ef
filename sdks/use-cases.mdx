@@ -1,0 +1,627 @@
+---
+title: SDK Use Cases
+description: Real-world use cases and examples for Rexec SDKs across different programming languages
+---
+
+Rexec SDKs enable you to programmatically create and manage sandboxed Linux environments for a wide variety of use cases. This guide shows real-world examples across different languages.
+
+## CI/CD Integration
+
+Run tests in isolated environments with reproducible results.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { RexecClient } from '@pipeopshq/rexec';
+
+    const client = new RexecClient({
+      baseURL: process.env.REXEC_URL,
+      token: process.env.REXEC_TOKEN,
+    });
+
+    // Create a container for testing
+    const container = await client.containers.create({
+      image: 'node:20',
+      environment: { CI: 'true' }
+    });
+
+    await client.containers.start(container.id);
+    const result = await client.containers.exec(
+      container.id, 
+      'npm install && npm test'
+    );
+
+    if (result.exitCode !== 0) {
+      console.error('Tests failed:', result.stderr);
+      process.exit(1);
+    }
+
+    await client.containers.delete(container.id);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import asyncio
+    from rexec import RexecClient
+
+    async def run_ci_tests(image: str, commands: list[str]):
+        async with RexecClient(base_url, token) as client:
+            container = await client.containers.create(image)
+            await client.containers.start(container.id)
+            
+            for cmd in commands:
+                result = await client.containers.exec(container.id, cmd)
+                if result.exit_code != 0:
+                    raise Exception(f"Command failed: {cmd}")
+            
+            await client.containers.delete(container.id)
+
+    # Run tests
+    await run_ci_tests('python:3.12', [
+        'pip install -r requirements.txt',
+        'pytest tests/'
+    ])
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    package main
+
+    import (
+        "context"
+        "fmt"
+        rexec "github.com/PipeOpsHQ/rexec-go"
+    )
+
+    func runCITests(client *rexec.Client, image string) error {
+        ctx := context.Background()
+        
+        container, err := client.Containers.Create(ctx, &rexec.CreateContainerRequest{
+            Image: image,
+            Environment: map[string]string{
+                "CI": "true",
+            },
+        })
+        if err != nil {
+            return err
+        }
+        defer client.Containers.Delete(ctx, container.ID)
+        
+        client.Containers.Start(ctx, container.ID)
+        
+        // Run tests
+        result, err := client.Containers.Exec(ctx, container.ID, []string{
+            "go", "test", "./...",
+        })
+        
+        if result.ExitCode != 0 {
+            return fmt.Errorf("tests failed: %s", result.Stderr)
+        }
+        
+        return nil
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+Isolated test environments ensure no state leakage between test runs and reproducible results across different environments.
+</Note>
+
+## Remote Development Environments
+
+Provide cloud development environments for your team or users.
+
+<CodeGroup>
+```go Go - Full Dev Environment
+package main
+
+import (
+    "context"
+    "fmt"
+    rexec "github.com/PipeOpsHQ/rexec-go"
+)
+
+func createDevEnvironment(client *rexec.Client, userID string) (*rexec.Container, error) {
+    ctx := context.Background()
+    
+    // Create a full development environment
+    container, err := client.Containers.Create(ctx, &rexec.CreateContainerRequest{
+        Image: "ubuntu:24.04",
+        Name:  fmt.Sprintf("dev-%s", userID),
+        Environment: map[string]string{
+            "EDITOR": "vim",
+            "TERM":   "xterm-256color",
+        },
+        Labels: map[string]string{
+            "user": userID,
+            "type": "development",
+        },
+    })
+    if err != nil {
+        return nil, err
+    }
+    
+    // Pre-install development tools
+    _, err = client.Containers.Exec(ctx, container.ID, []string{
+        "apt-get", "update", "&&", 
+        "apt-get", "install", "-y", "git", "vim", "curl",
+    })
+    
+    return container, err
+}
+```
+
+```typescript TypeScript - Dev Container Pool
+import { RexecClient } from '@pipeopshq/rexec';
+
+class DevEnvironmentPool {
+  constructor(private client: RexecClient) {}
+
+  async provisionEnvironment(userId: string, projectId: string) {
+    const container = await this.client.containers.create({
+      image: 'node:20',
+      name: `dev-${userId}-${projectId}`,
+      labels: {
+        user: userId,
+        project: projectId,
+        type: 'development'
+      }
+    });
+
+    await this.client.containers.start(container.id);
+    
+    // Clone project repository
+    const terminal = await this.client.terminal.connect(container.id);
+    terminal.write('git clone https://github.com/user/repo.git\n');
+    
+    return container;
+  }
+}
+```
+</CodeGroup>
+
+## Education Platforms
+
+Provide sandboxed coding environments for students with automatic grading.
+
+```typescript
+import { RexecClient } from '@pipeopshq/rexec';
+
+// Create a container per student with resource limits
+async function createStudentSandbox(studentId: string, courseId: string) {
+  const client = new RexecClient({ baseURL, token });
+  
+  const container = await client.containers.create({
+    image: 'python:3.12',
+    name: `student-${studentId}-${courseId}`,
+    labels: { 
+      student: studentId,
+      course: courseId,
+      type: 'education'
+    }
+  });
+
+  // Upload starter code
+  await client.files.write(
+    container.id,
+    '/home/student/assignment.py',
+    starterCode
+  );
+
+  return container;
+}
+
+// Grade submissions
+async function gradeSubmission(containerId: string) {
+  const result = await client.containers.exec(
+    containerId, 
+    'python -m pytest /home/student/'
+  );
+  
+  return {
+    passed: result.exitCode === 0,
+    output: result.stdout,
+    errors: result.stderr
+  };
+}
+```
+
+<Tip>
+Use labels to organize containers by course, assignment, or student cohort for easier management.
+</Tip>
+
+## Automated Testing
+
+Run integration tests in clean environments with real service dependencies.
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    package main
+
+    import (
+        "context"
+        "testing"
+        "time"
+        "github.com/stretchr/testify/assert"
+        "github.com/stretchr/testify/require"
+        rexec "github.com/PipeOpsHQ/rexec-go"
+    )
+
+    func TestDatabaseMigrations(t *testing.T) {
+        client := rexec.NewClient(baseURL, token)
+        ctx := context.Background()
+        
+        container, err := client.Containers.Create(ctx, &rexec.CreateContainerRequest{
+            Image: "postgres:16",
+            Environment: map[string]string{
+                "POSTGRES_PASSWORD": "test",
+            },
+        })
+        require.NoError(t, err)
+        defer client.Containers.Delete(ctx, container.ID)
+
+        client.Containers.Start(ctx, container.ID)
+        
+        // Wait for postgres to be ready
+        time.Sleep(5 * time.Second)
+        
+        // Run migrations
+        result, err := client.Containers.Exec(ctx, container.ID, []string{
+            "psql", "-U", "postgres", "-f", "/migrations/001_init.sql",
+        })
+        require.NoError(t, err)
+        
+        assert.Equal(t, 0, result.ExitCode)
+    }
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use rexec::{RexecClient, CreateContainerRequest};
+
+    // Parallel test execution
+    async fn run_tests_in_parallel(test_cases: Vec<TestCase>) -> Vec<TestResult> {
+        let client = RexecClient::new(base_url, token);
+        let handles: Vec<_> = test_cases.into_iter().map(|tc| {
+            let client = client.clone();
+            tokio::spawn(async move {
+                let container = client.containers()
+                    .create(&tc.image)
+                    .await?;
+                
+                client.containers().start(&container.id).await?;
+                
+                let result = client.containers()
+                    .exec(&container.id, &tc.command)
+                    .await?;
+                
+                client.containers().delete(&container.id).await?;
+                
+                Ok(TestResult {
+                    name: tc.name,
+                    passed: result.exit_code == 0,
+                })
+            })
+        }).collect();
+        
+        futures::future::join_all(handles).await
+    }
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```typescript
+    import { RexecClient } from '@pipeopshq/rexec';
+    import { describe, it, beforeAll, afterAll } from 'vitest';
+
+    describe('API Integration Tests', () => {
+      let client: RexecClient;
+      let redisContainer, postgresContainer;
+
+      beforeAll(async () => {
+        client = new RexecClient({ baseURL, token });
+
+        // Spin up test infrastructure
+        [redisContainer, postgresContainer] = await Promise.all([
+          client.containers.create({ image: 'redis:7' }),
+          client.containers.create({ 
+            image: 'postgres:16',
+            environment: { POSTGRES_PASSWORD: 'test' }
+          }),
+        ]);
+
+        await Promise.all([
+          client.containers.start(redisContainer.id),
+          client.containers.start(postgresContainer.id),
+        ]);
+      });
+
+      afterAll(async () => {
+        await Promise.all([
+          client.containers.delete(redisContainer.id),
+          client.containers.delete(postgresContainer.id),
+        ]);
+      });
+
+      it('should cache data in Redis', async () => {
+        const result = await client.containers.exec(
+          redisContainer.id,
+          'redis-cli SET test "hello" && redis-cli GET test'
+        );
+        expect(result.stdout.trim()).toBe('hello');
+      });
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Code Execution Service
+
+Build a safe code execution API for user-submitted code.
+
+<CodeGroup>
+```java Java - Safe Execution Endpoint
+import io.pipeops.rexec.*;
+
+@PostMapping("/execute")
+public ResponseEntity<ExecutionResult> executeCode(@RequestBody CodeRequest request) {
+    try {
+        Container container = client.containers().create(
+            new CreateContainerRequest(request.getLanguageImage())
+                .addLabel("type", "execution")
+        );
+        
+        client.containers().start(container.getId());
+        
+        // Write user code to file
+        client.files().write(
+            container.getId(),
+            "/tmp/code." + request.getExtension(),
+            request.getCode()
+        );
+        
+        // Execute with timeout
+        ExecResult result = client.containers().exec(
+            container.getId(),
+            request.getRunCommand()
+        );
+        
+        client.containers().delete(container.getId());
+        
+        return ResponseEntity.ok(new ExecutionResult(
+            result.getStdout(),
+            result.getStderr(),
+            result.getExitCode()
+        ));
+    } catch (RexecException e) {
+        return ResponseEntity.status(500).body(new ExecutionResult(e.getMessage()));
+    }
+}
+```
+
+```csharp C# - Code Execution with Cancellation
+public async Task<ExecutionResult> ExecuteCodeAsync(
+    string code, 
+    string language,
+    CancellationToken cancellationToken = default)
+{
+    var imageMap = new Dictionary<string, string> {
+        ["python"] = "python:3.12",
+        ["node"] = "node:20",
+        ["go"] = "golang:1.22",
+    };
+
+    var container = await client.Containers.CreateAsync(
+        imageMap[language], 
+        cancellationToken
+    );
+
+    try {
+        await client.Containers.StartAsync(container.Id, cancellationToken);
+        await client.Files.WriteAsync(container.Id, "/tmp/code", code, cancellationToken);
+        
+        var result = await client.Containers.ExecAsync(
+            container.Id,
+            GetRunCommand(language),
+            cancellationToken
+        );
+        
+        return new ExecutionResult(result.Stdout, result.Stderr, result.ExitCode);
+    }
+    finally {
+        await client.Containers.DeleteAsync(container.Id);
+    }
+}
+```
+</CodeGroup>
+
+<Warning>
+Always clean up containers after code execution to prevent resource leaks. Use try-finally blocks or RAII patterns.
+</Warning>
+
+## DevOps Automation
+
+Automate infrastructure tasks, backups, and maintenance operations.
+
+<Tabs>
+  <Tab title="Ruby">
+    ```ruby
+    require 'rexec'
+
+    client = Rexec::Client.new(ENV['REXEC_URL'], ENV['REXEC_TOKEN'])
+
+    # Create a container with backup tools
+    container = client.containers.create('ubuntu:24.04', 
+      name: 'backup-worker',
+      environment: {
+        'AWS_ACCESS_KEY_ID' => ENV['AWS_ACCESS_KEY_ID'],
+        'AWS_SECRET_ACCESS_KEY' => ENV['AWS_SECRET_ACCESS_KEY']
+      }
+    )
+
+    client.containers.start(container.id)
+
+    # Install AWS CLI and run backup
+    client.containers.exec(container.id, 'apt-get update && apt-get install -y awscli')
+    result = client.containers.exec(container.id, 'aws s3 sync /data s3://my-bucket/backup/')
+
+    if result.exit_code == 0
+      puts "Backup completed successfully"
+    else
+      puts "Backup failed: #{result.stderr}"
+    end
+
+    client.containers.delete(container.id)
+    ```
+  </Tab>
+  <Tab title="PHP">
+    ```php
+    <?php
+    use Rexec\RexecClient;
+
+    $client = new RexecClient(getenv('REXEC_URL'), getenv('REXEC_TOKEN'));
+
+    // Create WordPress container
+    $container = $client->containers()->create('wordpress:latest', [
+        'name' => 'wp-maintenance',
+        'environment' => [
+            'WORDPRESS_DB_HOST' => getenv('DB_HOST'),
+            'WORDPRESS_DB_PASSWORD' => getenv('DB_PASSWORD'),
+        ]
+    ]);
+
+    $client->containers()->start($container->id);
+
+    // Run WP-CLI commands
+    $result = $client->containers()->exec($container->id, 
+        'wp plugin update --all --allow-root'
+    );
+
+    echo "Plugin updates: " . $result->stdout;
+
+    // Cleanup
+    $client->containers()->delete($container->id);
+    ```
+  </Tab>
+</Tabs>
+
+## AI/ML Training Environments
+
+Spin up GPU-enabled training environments for machine learning workloads.
+
+```python
+import asyncio
+from rexec import RexecClient
+
+async def run_training_job(model_config: dict):
+    async with RexecClient(base_url, token) as client:
+        # Create GPU-enabled container
+        container = await client.containers.create(
+            image="pytorch/pytorch:2.0-cuda11.7-cudnn8-runtime",
+            name=f"training-{model_config['name']}",
+            environment={
+                "CUDA_VISIBLE_DEVICES": "0",
+                "WANDB_API_KEY": os.environ["WANDB_API_KEY"],
+            },
+            labels={
+                "job": model_config["name"],
+                "type": "training",
+            }
+        )
+        
+        await client.containers.start(container.id)
+        
+        # Upload training script and data
+        await client.files.write(
+            container.id,
+            "/workspace/train.py",
+            model_config["script"]
+        )
+        
+        # Run training
+        terminal = await client.terminal.connect(container.id)
+        await terminal.write(b"python /workspace/train.py\n")
+        
+        # Stream output
+        async for data in terminal:
+            print(data.decode(), end="")
+        
+        # Download trained model
+        model_data = await client.files.read(
+            container.id,
+            "/workspace/model.pth"
+        )
+        
+        await client.containers.delete(container.id)
+        return model_data
+```
+
+<Tip>
+Use labels to track training jobs and associate them with experiments in your ML tracking system like Weights & Biases or MLflow.
+</Tip>
+
+## API Testing & Mocking
+
+Test APIs against real service containers for accurate integration testing.
+
+```typescript
+import { RexecClient } from '@pipeopshq/rexec';
+import { describe, it, beforeAll, afterAll } from 'vitest';
+
+describe('API Integration Tests', () => {
+  let client: RexecClient;
+  let redisContainer: Container;
+  let postgresContainer: Container;
+
+  beforeAll(async () => {
+    client = new RexecClient({ baseURL, token });
+
+    // Spin up test infrastructure
+    [redisContainer, postgresContainer] = await Promise.all([
+      client.containers.create({ image: 'redis:7' }),
+      client.containers.create({ 
+        image: 'postgres:16',
+        environment: { POSTGRES_PASSWORD: 'test' }
+      }),
+    ]);
+
+    await Promise.all([
+      client.containers.start(redisContainer.id),
+      client.containers.start(postgresContainer.id),
+    ]);
+  });
+
+  afterAll(async () => {
+    await Promise.all([
+      client.containers.delete(redisContainer.id),
+      client.containers.delete(postgresContainer.id),
+    ]);
+  });
+
+  it('should cache data in Redis', async () => {
+    const result = await client.containers.exec(
+      redisContainer.id,
+      'redis-cli SET test "hello" && redis-cli GET test'
+    );
+    expect(result.stdout.trim()).toBe('hello');
+  });
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/sdks/error-handling">
+    Learn how to handle errors gracefully across all SDKs
+  </Card>
+  <Card title="Best Practices" icon="star" href="/sdks/best-practices">
+    Follow best practices for production deployments
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference">
+    Explore the complete API documentation
+  </Card>
+  <Card title="Getting Started" icon="rocket" href="/sdks/quickstart">
+    Start building with step-by-step tutorials
+  </Card>
+</CardGroup>

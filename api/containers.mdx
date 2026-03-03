@@ -1,0 +1,403 @@
+---
+title: Container Endpoints
+description: Manage Docker containers via the Rexec API
+---
+
+## Overview
+
+Container endpoints allow you to create, manage, and control isolated Linux containers. Each container runs with resource limits, persists data via volumes, and supports roles for pre-installed tooling.
+
+## List Containers
+
+Retrieve all containers for the authenticated user, including both Docker containers and online agents.
+
+<CodeGroup>
+```bash cURL
+curl -X GET https://api.rexec.io/api/containers \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```javascript JavaScript
+const response = await fetch('https://api.rexec.io/api/containers', {
+  headers: { 'Authorization': 'Bearer YOUR_TOKEN' }
+});
+const data = await response.json();
+console.log(data.containers);
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    'https://api.rexec.io/api/containers',
+    headers={'Authorization': 'Bearer YOUR_TOKEN'}
+)
+containers = response.json()['containers']
+```
+</CodeGroup>
+
+<ResponseField name="containers" type="array">
+  Array of container objects sorted by creation time (newest first)
+  
+  <Expandable title="Container Object">
+    <ResponseField name="id" type="string" required>
+      Docker container ID (or DB ID for containers being created)
+    </ResponseField>
+    
+    <ResponseField name="db_id" type="string" required>
+      Database record ID for the container
+    </ResponseField>
+    
+    <ResponseField name="user_id" type="string" required>
+      Owner's user ID
+    </ResponseField>
+    
+    <ResponseField name="name" type="string" required>
+      Container name (auto-generated or user-provided)
+    </ResponseField>
+    
+    <ResponseField name="image" type="string" required>
+      Image type (ubuntu, debian, arch, alpine, fedora, custom:imagename)
+    </ResponseField>
+    
+    <ResponseField name="role" type="string">
+      Installed role (node, python, golang, rust, devops, data, etc.)
+    </ResponseField>
+    
+    <ResponseField name="status" type="string" required>
+      Current status: `creating`, `configuring`, `running`, `stopped`, `error`
+    </ResponseField>
+    
+    <ResponseField name="created_at" type="timestamp" required>
+      Container creation timestamp
+    </ResponseField>
+    
+    <ResponseField name="last_used_at" type="timestamp" required>
+      Last activity timestamp
+    </ResponseField>
+    
+    <ResponseField name="idle_seconds" type="number">
+      Seconds since last activity
+    </ResponseField>
+    
+    <ResponseField name="mfa_locked" type="boolean">
+      Whether terminal access requires MFA verification
+    </ResponseField>
+    
+    <ResponseField name="resources" type="object" required>
+      Resource allocation for this container
+      
+      <Expandable title="Resources">
+        <ResponseField name="memory_mb" type="integer">
+          Memory limit in megabytes
+        </ResponseField>
+        <ResponseField name="cpu_shares" type="integer">
+          CPU shares in millicores (1000 = 1 CPU)
+        </ResponseField>
+        <ResponseField name="disk_mb" type="integer">
+          Disk quota in megabytes
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="count" type="integer">
+  Total number of containers
+</ResponseField>
+
+<ResponseField name="limit" type="integer">
+  Maximum containers allowed for this user's tier
+</ResponseField>
+
+## Create Container
+
+Create a new container with optional customization. Returns immediately with `creating` status while the container is provisioned asynchronously.
+
+<CodeGroup>
+```bash cURL
+curl -X POST https://api.rexec.io/api/containers \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-dev-env",
+    "image": "ubuntu",
+    "role": "node",
+    "memory_mb": 2048,
+    "cpu_shares": 2000,
+    "disk_mb": 10240,
+    "shell": {
+      "enhanced": true,
+      "theme": "rexec",
+      "use_tmux": true
+    }
+  }'
+```
+
+```javascript JavaScript
+const response = await fetch('https://api.rexec.io/api/containers', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer YOUR_TOKEN',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    name: 'my-dev-env',
+    image: 'ubuntu',
+    role: 'node',
+    memory_mb: 2048,
+    cpu_shares: 2000,
+    shell: { enhanced: true, use_tmux: true }
+  })
+});
+const container = await response.json();
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    'https://api.rexec.io/api/containers',
+    headers={'Authorization': 'Bearer YOUR_TOKEN'},
+    json={
+        'name': 'my-dev-env',
+        'image': 'ubuntu',
+        'role': 'python',
+        'memory_mb': 2048,
+        'cpu_shares': 2000
+    }
+)
+container = response.json()
+```
+</CodeGroup>
+
+<ParamField body="name" type="string">
+  Container name (auto-generated if not provided). Must be 1-64 alphanumeric characters and hyphens.
+</ParamField>
+
+<ParamField body="image" type="string" required>
+  Image type: `ubuntu`, `debian`, `arch`, `alpine`, `fedora`, `rockylinux`, or `custom`
+</ParamField>
+
+<ParamField body="custom_image" type="string">
+  Required when `image` is `custom`. Full Docker image name (e.g., `node:20-alpine`)
+</ParamField>
+
+<ParamField body="role" type="string">
+  Pre-installed tooling: `node`, `python`, `golang`, `rust`, `java`, `ruby`, `php`, `dotnet`, `devops`, `data`, `security`, `fullstack`, `mobile`, `game`, `ai`, `blockchain`, `embedded`, `scientific`, `barebone`
+</ParamField>
+
+<ParamField body="memory_mb" type="integer">
+  Memory limit in MB. Free tier: 256-4096, Pro: up to tier limit
+</ParamField>
+
+<ParamField body="cpu_shares" type="integer">
+  CPU allocation in millicores (500 = 0.5 CPU). Free tier: 250-4000
+</ParamField>
+
+<ParamField body="disk_mb" type="integer">
+  Disk quota in MB. Free tier: 1024-16384
+</ParamField>
+
+<ParamField body="shell" type="object">
+  Shell customization options
+  
+  <Expandable title="Shell Config">
+    <ParamField body="enhanced" type="boolean" default="true">
+      Install zsh with oh-my-zsh and plugins
+    </ParamField>
+    <ParamField body="theme" type="string" default="rexec">
+      Zsh theme: `rexec`, `minimal`, `powerlevel10k`
+    </ParamField>
+    <ParamField body="autosuggestions" type="boolean" default="true">
+      Enable zsh-autosuggestions plugin
+    </ParamField>
+    <ParamField body="syntax_highlight" type="boolean" default="true">
+      Enable syntax highlighting
+    </ParamField>
+    <ParamField body="use_tmux" type="boolean" default="false">
+      Enable tmux for session persistence
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseExample>
+```json 202 Accepted
+{
+  "id": "abc123-def456",
+  "db_id": "abc123-def456",
+  "user_id": "user_xyz",
+  "name": "my-dev-env",
+  "image": "ubuntu",
+  "role": "node",
+  "status": "creating",
+  "created_at": "2024-01-15T10:30:00Z",
+  "async": true,
+  "message": "Container is being created. This may take a moment if the image needs to be pulled.",
+  "resources": {
+    "memory_mb": 2048,
+    "cpu_shares": 2000,
+    "disk_mb": 10240
+  }
+}
+```
+</ResponseExample>
+
+<Note>
+  Container creation is asynchronous. The API returns immediately with status `creating`. Monitor the status via WebSocket events or by polling the GET endpoint.
+</Note>
+
+## Get Container
+
+Retrieve details for a specific container by ID.
+
+```bash
+GET /api/containers/:id
+```
+
+<ParamField path="id" type="string" required>
+  Container ID (Docker ID or DB ID)
+</ParamField>
+
+## Start Container
+
+Start a stopped container. If the container was removed from Docker but exists in the database, it will be automatically recreated with the same configuration.
+
+```bash
+POST /api/containers/:id/start
+```
+
+<ParamField path="id" type="string" required>
+  Container ID
+</ParamField>
+
+<ResponseExample>
+```json 200 OK
+{
+  "message": "container started",
+  "id": "abc123def456",
+  "name": "my-dev-env",
+  "status": "running"
+}
+```
+
+```json 200 OK (Recreated)
+{
+  "message": "container recreated and started",
+  "id": "new123def456",
+  "old_id": "abc123def456",
+  "name": "my-dev-env",
+  "status": "running",
+  "recreated": true,
+  "volume_kept": true
+}
+```
+</ResponseExample>
+
+## Stop Container
+
+Stop a running container without removing it.
+
+```bash
+POST /api/containers/:id/stop
+```
+
+<ParamField path="id" type="string" required>
+  Container ID
+</ParamField>
+
+## Delete Container
+
+Soft-delete a container (stops and removes from Docker, marks as deleted in database).
+
+```bash
+DELETE /api/containers/:id
+```
+
+<ParamField path="id" type="string" required>
+  Container ID
+</ParamField>
+
+<ResponseExample>
+```json 200 OK
+{
+  "message": "container deleted",
+  "id": "abc123def456",
+  "db_id": "uuid-1234",
+  "name": "my-dev-env"
+}
+```
+</ResponseExample>
+
+## Update Container Settings
+
+Update container name and resource limits. For running containers, this will stop, recreate with new limits, and restart the container (preserving volume data).
+
+```bash
+PATCH /api/containers/:id/settings
+```
+
+<ParamField path="id" type="string" required>
+  Container ID (Docker ID or DB ID)
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  New container name
+</ParamField>
+
+<ParamField body="memory_mb" type="integer" required>
+  New memory limit in MB
+</ParamField>
+
+<ParamField body="cpu_shares" type="integer" required>
+  New CPU allocation in millicores
+</ParamField>
+
+<ParamField body="disk_mb" type="integer" required>
+  New disk quota in MB
+</ParamField>
+
+<ResponseExample>
+```json 200 OK
+{
+  "message": "settings updated",
+  "restarted": true,
+  "container": {
+    "id": "new123def456",
+    "db_id": "uuid-1234",
+    "name": "renamed-container",
+    "image": "ubuntu",
+    "status": "running",
+    "role": "node",
+    "resources": {
+      "memory_mb": 4096,
+      "cpu_shares": 4000,
+      "disk_mb": 20480
+    }
+  }
+}
+```
+</ResponseExample>
+
+<Warning>
+  Updating resources on a running container will cause it to restart. Active terminal sessions will need to reconnect. Volume data is preserved.
+</Warning>
+
+## Container Statuses
+
+| Status | Description |
+|--------|-------------|
+| `creating` | Container is being pulled and created (async) |
+| `configuring` | Container started, shell/role setup in progress |
+| `running` | Container is running and ready for connections |
+| `stopped` | Container is stopped but not removed |
+| `error` | Container creation or startup failed |
+
+## Container Limits
+
+| Tier | Max Containers | Memory Range | CPU Range | Disk Range |
+|------|----------------|--------------|-----------|------------|
+| Guest | 1 | 512 MB | 0.5 CPU | 2 GB |
+| Free | 5 | 256 MB - 4 GB | 0.25 - 4 CPU | 1 - 16 GB |
+| Pro | 10 | up to 4 GB | up to 4 CPU | up to 20 GB |
+| Enterprise | 25 | up to 8 GB | up to 8 CPU | up to 50 GB |

@@ -1,0 +1,675 @@
+---
+title: Agent Troubleshooting
+description: Common agent issues and solutions
+---
+
+## Quick Diagnostics
+
+Run these commands to quickly diagnose agent issues:
+
+<CodeGroup>
+```bash Check Status
+rexec-agent status
+```
+
+```bash Test Connection (Foreground)
+rexec-agent start
+```
+
+```bash View Service Logs
+sudo journalctl -u rexec-agent -f
+```
+
+```bash Verify Binary
+rexec-agent version
+```
+</CodeGroup>
+
+## Agent Won't Connect
+
+### Symptom
+
+Agent starts but doesn't connect to Rexec, or shows connection errors.
+
+### Diagnosis
+
+1. **Check agent status:**
+   ```bash
+   rexec-agent status
+   ```
+
+2. **Run in foreground to see errors:**
+   ```bash
+   rexec-agent start
+   ```
+
+3. **Verify token is valid:**
+   ```bash
+   curl -H "Authorization: Bearer $REXEC_TOKEN" https://rexec.pipeops.io/api/profile
+   ```
+
+### Solutions
+
+<AccordionGroup>
+  <Accordion title="Invalid or Expired Token">
+    **Error:**
+    ```
+    [Agent WS] Token verification failed for agent abc123 (type=JWT): token is expired
+    ```
+    
+    **Solution:**
+    ```bash
+    # Generate API token at https://rexec.pipeops.io/account/api
+    rexec-agent refresh-token
+    sudo systemctl restart rexec-agent
+    ```
+    
+    <Note>
+      Use API tokens (starting with `rexec_`) instead of JWT tokens for persistent connections.
+    </Note>
+  </Accordion>
+  
+  <Accordion title="Agent Not Found (404)">
+    **Error:**
+    ```
+    Fatal: Server rejected connection (Status 404).
+    Agent not found. It may have been deleted.
+    ```
+    
+    **Solution:**
+    ```bash
+    # Re-register the agent
+    rexec-agent register --name "my-server"
+    sudo systemctl restart rexec-agent
+    ```
+  </Accordion>
+  
+  <Accordion title="Network/Firewall Issues">
+    **Error:**
+    ```
+    Connection lost: dial tcp: i/o timeout. Reconnecting in 5s...
+    ```
+    
+    **Solution:**
+    1. **Check outbound connectivity:**
+       ```bash
+       curl -v https://rexec.pipeops.io
+       ```
+    
+    2. **Verify WebSocket connectivity:**
+       ```bash
+       curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
+         https://rexec.pipeops.io/ws/agent/test
+       ```
+    
+    3. **Check firewall rules:**
+       - Allow outbound HTTPS (443)
+       - Allow outbound WebSocket (WSS on 443)
+    
+    4. **Check proxy settings:**
+       ```bash
+       echo $HTTP_PROXY
+       echo $HTTPS_PROXY
+       ```
+  </Accordion>
+  
+  <Accordion title="Wrong Agent ID">
+    **Error:**
+    ```
+    [Agent WS] Authorization failed: agent abc123 owned by user-1, token user user-2
+    ```
+    
+    **Solution:**
+    1. **Verify agent_id matches token:**
+       ```bash
+       cat /etc/rexec/agent.yaml | grep agent_id
+       ```
+    
+    2. **Re-register if mismatched:**
+       ```bash
+       rexec-agent unregister
+       rexec-agent register --name "my-server"
+       ```
+  </Accordion>
+</AccordionGroup>
+
+## Connection Keeps Dropping
+
+### Symptom
+
+Agent connects successfully but disconnects repeatedly.
+
+### Diagnosis
+
+```bash
+# Check logs for reconnection patterns
+sudo journalctl -u rexec-agent | grep "Reconnecting"
+```
+
+### Solutions
+
+<AccordionGroup>
+  <Accordion title="Network Instability">
+    **Pattern:**
+    ```
+    Connection lost: read tcp: i/o timeout. Reconnecting in 10s... (attempt 2)
+    Connection lost: EOF. Reconnecting in 20s... (attempt 3)
+    ```
+    
+    **Solutions:**
+    - Check network stability with ping tests
+    - Verify no aggressive NAT timeout on firewall
+    - Ensure WebSocket keep-alive (ping/pong) is working
+    
+    The agent sends pings every 15 seconds and expects pongs within 45 seconds.
+  </Accordion>
+  
+  <Accordion title="Server Load/Restarts">
+    **Pattern:**
+    ```
+    [Agent WS] Read error for agent abc123: websocket: close 1006 (abnormal closure)
+    Connected to Rexec successfully
+    ```
+    
+    **This is normal** - agent auto-reconnects during server maintenance.
+  </Accordion>
+  
+  <Accordion title="Token Expiration">
+    **Pattern:**
+    ```
+    Fatal: Server rejected connection (Status 401).
+    Token may be expired or invalid.
+    ```
+    
+    **Solution:**
+    ```bash
+    rexec-agent refresh-token
+    sudo systemctl restart rexec-agent
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Shell Not Working Correctly
+
+### Symptom
+
+Shell starts but has broken features (arrow keys, autocomplete, history).
+
+### Diagnosis
+
+1. **Check configured shell:**
+   ```bash
+   cat /etc/rexec/agent.yaml | grep shell
+   ```
+
+2. **Verify shell exists and is executable:**
+   ```bash
+   which bash
+   ls -la /bin/bash
+   ```
+
+### Solutions
+
+<AccordionGroup>
+  <Accordion title="Arrow Keys Broken">
+    **Cause:** Using `/bin/sh` which lacks readline support.
+    
+    **Solution:**
+    ```bash
+    # Install bash or zsh
+    sudo apt-get install bash  # Debian/Ubuntu
+    sudo yum install bash      # RHEL/CentOS
+    
+    # Re-register with better shell
+    rexec-agent register --shell /bin/bash
+    sudo systemctl restart rexec-agent
+    ```
+  </Accordion>
+  
+  <Accordion title="Shell Doesn't Exist">
+    **Error:**
+    ```
+    shell_error: fork/exec /bin/zsh: no such file or directory
+    ```
+    
+    **Solution:**
+    ```bash
+    # Install missing shell
+    sudo apt-get install zsh   # Debian/Ubuntu
+    
+    # Or use available shell
+    rexec-agent register --shell /bin/bash
+    sudo systemctl restart rexec-agent
+    ```
+  </Accordion>
+  
+  <Accordion title="Environment Issues">
+    **Cause:** Missing environment variables or dotfiles.
+    
+    **Solution:**
+    1. **Check if shell config exists:**
+       ```bash
+       ls -la ~/.bashrc ~/.bash_profile ~/.zshrc
+       ```
+    
+    2. **Create minimal config:**
+       ```bash
+       # For bash
+       cat > ~/.bashrc <<EOF
+       export PS1='\u@\h:\w\$ '
+       export PATH=/usr/local/bin:/usr/bin:/bin
+       alias ll='ls -la'
+       EOF
+       ```
+    
+    3. **Verify working_dir exists:**
+       ```yaml
+       # /etc/rexec/agent.yaml
+       working_dir: /home/user  # Must exist
+       ```
+  </Accordion>
+  
+  <Accordion title="Permission Denied">
+    **Error:**
+    ```
+    shell_error: fork/exec /bin/bash: permission denied
+    ```
+    
+    **Solution:**
+    ```bash
+    # Fix shell permissions
+    sudo chmod 755 /bin/bash
+    
+    # If SELinux, check context
+    sudo ls -Z /bin/bash
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Token Issues
+
+### Repeated 401 Errors
+
+**Symptom:**
+```
+Fatal: Server rejected connection (Status 401).
+Token may be expired or invalid.
+```
+
+**Solution:**
+
+<Steps>
+  <Step title="Generate API Token">
+    Go to [Account Settings → API Tokens](https://rexec.pipeops.io/account/api) and create a new token.
+  </Step>
+  
+  <Step title="Refresh Agent Token">
+    ```bash
+    export REXEC_TOKEN="rexec_your_new_token"
+    rexec-agent refresh-token
+    ```
+  </Step>
+  
+  <Step title="Restart Agent">
+    ```bash
+    sudo systemctl restart rexec-agent
+    ```
+  </Step>
+  
+  <Step title="Verify Connection">
+    ```bash
+    sudo journalctl -u rexec-agent -f
+    # Should see: "Connected to Rexec successfully"
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  **Always use API tokens** (starting with `rexec_`) for agents. JWT tokens expire after 24 hours and are not suitable for persistent connections.
+</Warning>
+
+## Agent Not Appearing in Dashboard
+
+### Symptom
+
+Agent is running and connected, but not visible in dashboard.
+
+### Diagnosis
+
+```bash
+# Check agent is registered
+rexec-agent status
+
+# Verify agent_id
+cat /etc/rexec/agent.yaml | grep agent_id
+
+# Check logs
+sudo journalctl -u rexec-agent | grep -i connected
+```
+
+### Solutions
+
+<AccordionGroup>
+  <Accordion title="Not Registered">
+    **Status shows:**
+    ```
+    Registered: No
+    ```
+    
+    **Solution:**
+    ```bash
+    rexec-agent register --name "my-server"
+    sudo systemctl restart rexec-agent
+    ```
+  </Accordion>
+  
+  <Accordion title="Wrong User Account">
+    Agent is registered to a different user account than you're logged into.
+    
+    **Solution:**
+    1. Verify token belongs to correct account
+    2. Re-register with correct token
+    3. Or log into correct account in dashboard
+  </Accordion>
+  
+  <Accordion title="Agent Deleted">
+    Agent was deleted from dashboard but config still exists.
+    
+    **Solution:**
+    ```bash
+    rexec-agent unregister
+    rexec-agent register --name "my-server"
+    sudo systemctl restart rexec-agent
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Service Won't Start
+
+### Symptom
+
+```bash
+sudo systemctl start rexec-agent
+# Fails immediately
+```
+
+### Diagnosis
+
+```bash
+# Check service status
+sudo systemctl status rexec-agent
+
+# View detailed logs
+sudo journalctl -u rexec-agent -n 50
+```
+
+### Solutions
+
+<AccordionGroup>
+  <Accordion title="Config File Missing">
+    **Error:**
+    ```
+    Error loading config: open /etc/rexec/agent.yaml: no such file or directory
+    ```
+    
+    **Solution:**
+    ```bash
+    # Register agent first
+    rexec-agent register --name "my-server"
+    
+    # Or create config manually
+    sudo mkdir -p /etc/rexec
+    sudo nano /etc/rexec/agent.yaml
+    ```
+  </Accordion>
+  
+  <Accordion title="Binary Not Found">
+    **Error:**
+    ```
+    Failed to start rexec-agent.service: Unit not found.
+    ```
+    
+    **Solution:**
+    ```bash
+    # Reinstall binary
+    curl -sSL https://rexec.pipeops.io/install-agent.sh | bash
+    
+    # Reinstall service
+    sudo rexec-agent install
+    ```
+  </Accordion>
+  
+  <Accordion title="Permission Errors">
+    **Error:**
+    ```
+    Permission denied reading /etc/rexec/agent.yaml
+    ```
+    
+    **Solution:**
+    ```bash
+    # Fix config file permissions
+    sudo chmod 600 /etc/rexec/agent.yaml
+    sudo chown rexec:rexec /etc/rexec/agent.yaml
+    
+    # Fix service permissions
+    sudo chmod 644 /etc/systemd/system/rexec-agent.service
+    sudo systemctl daemon-reload
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Performance Issues
+
+### High CPU Usage
+
+**Diagnosis:**
+```bash
+top -p $(pgrep rexec-agent)
+```
+
+**Solutions:**
+- Check if shell has infinite loop in startup scripts
+- Verify no runaway processes spawned by shell
+- Check for excessive logging
+
+### High Memory Usage
+
+**Normal:** Agent uses ~10-20MB
+
+**High (>100MB):** Check for memory leaks in shell or spawned processes
+
+### Slow Terminal Response
+
+**Causes:**
+- Network latency (check ping to Rexec server)
+- Server load (check dashboard)
+- Large output (slow terminal rendering)
+
+**Solutions:**
+```bash
+# Check latency
+ping rexec.pipeops.io
+
+# Test WebSocket latency
+wscat -c wss://rexec.pipeops.io/ws/ping
+```
+
+## Auto-Update Issues
+
+### Update Failed
+
+**Error:**
+```
+[AutoUpdate] Download failed: Get "https://...": i/o timeout
+```
+
+**Solutions:**
+- Check network connectivity
+- Verify download URL is accessible
+- Temporarily disable auto-update:
+  ```yaml
+  auto_update: false
+  ```
+
+### Wrong Binary Downloaded
+
+**Error:**
+```
+[AutoUpdate] Verification failed; keeping current binary.
+```
+
+**Cause:** Platform detection mismatch
+
+**Solution:**
+```bash
+# Manually download correct binary
+wget https://github.com/rexec/rexec/releases/latest/download/rexec-agent-linux-amd64 \
+  -O /usr/local/bin/rexec-agent
+chmod +x /usr/local/bin/rexec-agent
+sudo systemctl restart rexec-agent
+```
+
+## Debug Mode
+
+### Enable Verbose Logging
+
+Run agent in foreground with verbose output:
+
+```bash
+# Stop service
+sudo systemctl stop rexec-agent
+
+# Run in foreground
+rexec-agent start
+```
+
+All debug logs will be printed to stdout.
+
+### Systemd Debug
+
+Increase systemd logging:
+
+```bash
+# View logs with timestamps
+sudo journalctl -u rexec-agent -f --output=short-iso
+
+# View logs since boot
+sudo journalctl -u rexec-agent -b
+
+# Export logs to file
+sudo journalctl -u rexec-agent > agent-logs.txt
+```
+
+## Getting Help
+
+If you're still experiencing issues:
+
+<Steps>
+  <Step title="Collect Diagnostics">
+    ```bash
+    # Agent status
+    rexec-agent status > diagnostics.txt
+    
+    # Version
+    rexec-agent version >> diagnostics.txt
+    
+    # Logs
+    sudo journalctl -u rexec-agent -n 100 >> diagnostics.txt
+    
+    # Config (redact token)
+    cat /etc/rexec/agent.yaml | grep -v token >> diagnostics.txt
+    ```
+  </Step>
+  
+  <Step title="Check Documentation">
+    - [Agent Overview](/agent/overview)
+    - [Installation Guide](/agent/installation)
+    - [Configuration Reference](/agent/configuration)
+  </Step>
+  
+  <Step title="Contact Support">
+    - **GitHub Issues**: [github.com/rexec/rexec/issues](https://github.com/rexec/rexec/issues)
+    - **Email**: support@rexec.io
+    - Include diagnostics.txt and describe the issue
+  </Step>
+</Steps>
+
+## Common Error Messages
+
+<Accordion title="Error: agent_id not found in config">
+  **Full Error:**
+  ```
+  No agent_id found in config. Re-run 'rexec-agent register' or set agent_id in your config file.
+  ```
+  
+  **Solution:**
+  ```bash
+  rexec-agent register --name "my-server"
+  ```
+</Accordion>
+
+<Accordion title="Error: dial tcp: lookup rexec.pipeops.io: no such host">
+  **Cause:** DNS resolution failure
+  
+  **Solution:**
+  ```bash
+  # Test DNS
+  nslookup rexec.pipeops.io
+  
+  # Try Google DNS
+  echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+  ```
+</Accordion>
+
+<Accordion title="Error: websocket: bad handshake">
+  **Cause:** Proxy or firewall blocking WebSocket upgrade
+  
+  **Solution:**
+  - Check corporate proxy settings
+  - Verify WebSocket traffic allowed on port 443
+  - Test without proxy: `unset HTTP_PROXY HTTPS_PROXY`
+</Accordion>
+
+<Accordion title="Error: fork/exec: operation not permitted">
+  **Cause:** SELinux or AppArmor blocking shell execution
+  
+  **Solution:**
+  ```bash
+  # Check SELinux
+  getenforce
+  
+  # Temporarily disable for testing
+  sudo setenforce 0
+  
+  # For permanent fix, create SELinux policy
+  ```
+</Accordion>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use API Tokens" icon="key">
+    Always use long-lived API tokens (starting with `rexec_`) instead of JWT tokens.
+  </Card>
+  
+  <Card title="Monitor Logs" icon="file-lines">
+    Regularly check logs for connection issues:
+    ```bash
+    sudo journalctl -u rexec-agent -f
+    ```
+  </Card>
+  
+  <Card title="Keep Updated" icon="arrow-up">
+    Enable auto-update or manually update regularly:
+    ```bash
+    curl -sSL https://rexec.pipeops.io/install-agent.sh | bash
+    ```
+  </Card>
+  
+  <Card title="Secure Config" icon="lock">
+    Protect config files with proper permissions:
+    ```bash
+    sudo chmod 600 /etc/rexec/agent.yaml
+    ```
+  </Card>
+</CardGroup>

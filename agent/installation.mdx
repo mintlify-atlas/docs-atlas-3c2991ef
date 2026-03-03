@@ -1,0 +1,389 @@
+---
+title: Agent Installation
+description: Install and set up the Rexec agent on your server or local machine
+---
+
+## Quick Start (Dashboard Method)
+
+The easiest way to set up an agent is through the Rexec dashboard:
+
+<Steps>
+  <Step title="Open Agent Settings">
+    Go to **[Settings → Agents](https://rexec.pipeops.io/settings)** in your Rexec dashboard
+  </Step>
+  
+  <Step title="Create Agent">
+    Click **"Add Agent"** to create a new agent
+  </Step>
+  
+  <Step title="Copy Install Command">
+    The dashboard generates a ready-to-use command with your token and agent configuration pre-configured
+  </Step>
+  
+  <Step title="Run on Server">
+    Paste and run the command on your server
+  </Step>
+</Steps>
+
+<Note>
+  The dashboard-generated command includes your authentication token and automatically handles registration.
+</Note>
+
+## Manual Installation
+
+### Method 1: Install Script (Recommended)
+
+The install script automatically detects your platform and downloads the correct binary:
+
+```bash
+curl -sSL https://rexec.pipeops.io/install-agent.sh | bash
+```
+
+This script:
+- Detects your OS and architecture
+- Downloads the latest agent binary
+- Installs to `/usr/local/bin/rexec-agent`
+- Sets executable permissions
+
+### Method 2: Direct Download
+
+Download the binary directly for your platform:
+
+<Tabs>
+  <Tab title="Linux amd64">
+    ```bash
+    wget https://github.com/rexec/rexec/releases/latest/download/rexec-agent-linux-amd64 \
+      -O /usr/local/bin/rexec-agent
+    chmod +x /usr/local/bin/rexec-agent
+    ```
+  </Tab>
+  
+  <Tab title="Linux arm64">
+    ```bash
+    wget https://github.com/rexec/rexec/releases/latest/download/rexec-agent-linux-arm64 \
+      -O /usr/local/bin/rexec-agent
+    chmod +x /usr/local/bin/rexec-agent
+    ```
+  </Tab>
+  
+  <Tab title="macOS amd64">
+    ```bash
+    wget https://github.com/rexec/rexec/releases/latest/download/rexec-agent-darwin-amd64 \
+      -O /usr/local/bin/rexec-agent
+    chmod +x /usr/local/bin/rexec-agent
+    ```
+  </Tab>
+  
+  <Tab title="macOS arm64">
+    ```bash
+    wget https://github.com/rexec/rexec/releases/latest/download/rexec-agent-darwin-arm64 \
+      -O /usr/local/bin/rexec-agent
+    chmod +x /usr/local/bin/rexec-agent
+    ```
+  </Tab>
+</Tabs>
+
+### Method 3: Build from Source
+
+```bash
+git clone https://github.com/rexec/rexec.git
+cd rexec
+make agent
+```
+
+The compiled binary will be in `bin/rexec-agent`.
+
+## Registration
+
+After installation, register your server with Rexec:
+
+### Interactive Registration
+
+```bash
+rexec-agent register
+```
+
+You'll be prompted for:
+- **Token**: Your Rexec API token (get from dashboard)
+- **Name**: Display name for this server (defaults to hostname)
+
+### Non-Interactive Registration
+
+Provide all options via command-line flags:
+
+```bash
+rexec-agent register \
+  --name "prod-server-1" \
+  --description "Production API server" \
+  --shell /bin/zsh \
+  --tags "production,api,aws" \
+  --token "your-api-token"
+```
+
+<Note>
+  The token can also be provided via the `REXEC_TOKEN` environment variable to avoid exposing it in command history.
+</Note>
+
+### Registration Options
+
+<ParamField path="--name" type="string" default="hostname">
+  Name for this terminal (displayed in dashboard)
+</ParamField>
+
+<ParamField path="--description" type="string">
+  Optional description of this server
+</ParamField>
+
+<ParamField path="--shell" type="string" default="$SHELL or /bin/bash">
+  Shell to use for terminal sessions
+</ParamField>
+
+<ParamField path="--tags" type="string">
+  Comma-separated tags for organization (e.g., "production,aws,us-east")
+</ParamField>
+
+<ParamField path="--token" type="string">
+  Auth token (or set REXEC_TOKEN env var)
+</ParamField>
+
+<ParamField path="--host" type="string" default="https://rexec.pipeops.io">
+  Rexec API host URL
+</ParamField>
+
+## Starting the Agent
+
+### Foreground Mode (Testing)
+
+Run in foreground to see logs and test connectivity:
+
+```bash
+rexec-agent start
+```
+
+Output:
+```
+Rexec Agent
+─────────────────────────────────────────
+  Name:   prod-server-1
+  ID:     abc123-def456-...
+  Host:   https://rexec.pipeops.io
+  Shell:  /bin/bash
+  Token:  API token
+
+Connecting to Rexec...
+Connected to Rexec successfully
+```
+
+### Background Daemon
+
+Run as a background daemon:
+
+```bash
+rexec-agent start --daemon
+```
+
+<Warning>
+  Background mode writes logs to syslog. For persistent service, use the systemd installation method below.
+</Warning>
+
+## Systemd Service Installation
+
+For production deployments, install as a systemd service:
+
+```bash
+sudo rexec-agent install
+```
+
+This creates a systemd service that:
+- Starts automatically on boot
+- Restarts on failure
+- Manages credentials securely
+- Logs to journald
+
+### Managing the Service
+
+<CodeGroup>
+```bash Check Status
+sudo systemctl status rexec-agent
+```
+
+```bash Start Service
+sudo systemctl start rexec-agent
+```
+
+```bash Stop Service
+sudo systemctl stop rexec-agent
+```
+
+```bash Restart Service
+sudo systemctl restart rexec-agent
+```
+
+```bash View Logs
+sudo journalctl -u rexec-agent -f
+```
+
+```bash Enable Auto-Start
+sudo systemctl enable rexec-agent
+```
+
+```bash Disable Auto-Start
+sudo systemctl disable rexec-agent
+```
+</CodeGroup>
+
+### Systemd Unit File
+
+The `install` command creates `/etc/systemd/system/rexec-agent.service`:
+
+```ini
+[Unit]
+Description=Rexec Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rexec
+ExecStart=/usr/local/bin/rexec-agent start
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## Enhanced Shell Installation
+
+For a better terminal experience, pre-install zsh + oh-my-zsh:
+
+```bash
+rexec-agent prep-shell
+```
+
+This installs:
+- **zsh**: Feature-rich shell with better autocomplete
+- **oh-my-zsh**: Shell framework with themes and plugins
+- **Common plugins**: git, docker, kubectl
+
+<Note>
+  Enhanced shell installation is optional. The agent works with any POSIX-compatible shell.
+</Note>
+
+## Verification
+
+Check agent status:
+
+```bash
+rexec-agent status
+```
+
+Output:
+```
+Agent Status
+─────────────────────────────────────────
+  Registered: ✓
+  ID:         abc123-def456-...
+  Name:       prod-server-1
+  Host:       https://rexec.pipeops.io
+  Shell:      /bin/bash
+  Running:    ✓ Yes
+```
+
+## Installation Locations
+
+<Tabs>
+  <Tab title="Binary">
+    - **Install script**: `/usr/local/bin/rexec-agent`
+    - **Manual build**: `bin/rexec-agent` (in repo)
+  </Tab>
+  
+  <Tab title="Config">
+    - **System-wide**: `/etc/rexec/agent.yaml`
+    - **User-specific**: `~/.rexec/agent.json`
+  </Tab>
+  
+  <Tab title="Systemd Service">
+    - **Unit file**: `/etc/systemd/system/rexec-agent.service`
+  </Tab>
+  
+  <Tab title="Logs">
+    - **Systemd**: `journalctl -u rexec-agent`
+    - **Daemon mode**: syslog
+  </Tab>
+</Tabs>
+
+## Platform-Specific Notes
+
+<AccordionGroup>
+  <Accordion title="Ubuntu/Debian">
+    ```bash
+    # Install dependencies if building from source
+    sudo apt-get update
+    sudo apt-get install -y wget curl git
+    
+    # Installation works out-of-the-box
+    curl -sSL https://rexec.pipeops.io/install-agent.sh | bash
+    ```
+  </Accordion>
+  
+  <Accordion title="RHEL/CentOS/Fedora">
+    ```bash
+    # Install dependencies if building from source
+    sudo dnf install -y wget curl git
+    
+    # Installation works out-of-the-box
+    curl -sSL https://rexec.pipeops.io/install-agent.sh | bash
+    ```
+  </Accordion>
+  
+  <Accordion title="Alpine Linux">
+    ```bash
+    # Alpine uses musl libc - use static binary
+    apk add --no-cache wget ca-certificates
+    
+    wget https://github.com/rexec/rexec/releases/latest/download/rexec-agent-linux-amd64 \
+      -O /usr/local/bin/rexec-agent
+    chmod +x /usr/local/bin/rexec-agent
+    ```
+  </Accordion>
+  
+  <Accordion title="macOS">
+    ```bash
+    # Using Homebrew (if available)
+    brew install wget
+    
+    # Download binary
+    wget https://github.com/rexec/rexec/releases/latest/download/rexec-agent-darwin-arm64 \
+      -O /usr/local/bin/rexec-agent
+    chmod +x /usr/local/bin/rexec-agent
+    
+    # Note: systemd not available on macOS
+    # Use launchd or run manually
+    ```
+  </Accordion>
+  
+  <Accordion title="Raspberry Pi">
+    ```bash
+    # Raspberry Pi 3/4 (arm64)
+    wget https://github.com/rexec/rexec/releases/latest/download/rexec-agent-linux-arm64 \
+      -O /usr/local/bin/rexec-agent
+    chmod +x /usr/local/bin/rexec-agent
+    
+    # Raspberry Pi 2 (armv7)
+    # Build from source or use arm64 binary with 64-bit OS
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/agent/configuration">
+    Configure agent settings and environment
+  </Card>
+  
+  <Card title="Troubleshooting" icon="wrench" href="/agent/troubleshooting">
+    Common issues and solutions
+  </Card>
+</CardGroup>

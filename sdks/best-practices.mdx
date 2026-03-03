@@ -1,0 +1,708 @@
+---
+title: SDK Best Practices
+description: Production-ready patterns and best practices for using Rexec SDKs
+---
+
+Follow these best practices to build robust, secure, and performant applications with Rexec SDKs.
+
+## Client Initialization
+
+### Reuse Client Instances
+
+Create one client instance and reuse it throughout your application lifecycle. Clients maintain connection pools and internal state.
+
+<CodeGroup>
+```typescript TypeScript
+// Good: Single client instance
+const client = new RexecClient({
+  baseURL: process.env.REXEC_URL!,
+  token: process.env.REXEC_TOKEN!,
+});
+
+export default client;
+
+// Bad: Creating clients repeatedly
+function createContainer() {
+  const client = new RexecClient({ ... }); // Don't do this
+  return client.containers.create(...);
+}
+```
+
+```python Python
+# Good: Singleton pattern
+class RexecService:
+    _client: RexecClient | None = None
+    
+    @classmethod
+    async def get_client(cls) -> RexecClient:
+        if cls._client is None:
+            cls._client = RexecClient(
+                base_url=os.environ["REXEC_URL"],
+                token=os.environ["REXEC_TOKEN"]
+            )
+        return cls._client
+
+# Usage
+client = await RexecService.get_client()
+```
+
+```go Go
+// Good: Package-level client
+var client *rexec.Client
+
+func init() {
+    client = rexec.NewClient(
+        os.Getenv("REXEC_URL"),
+        os.Getenv("REXEC_TOKEN"),
+    )
+}
+
+func CreateContainer(ctx context.Context) (*rexec.Container, error) {
+    return client.Containers.Create(ctx, &rexec.CreateContainerRequest{
+        Image: "ubuntu:24.04",
+    })
+}
+```
+</CodeGroup>
+
+### Configure Timeouts
+
+Set appropriate timeouts to prevent operations from hanging indefinitely.
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    client := rexec.NewClient(baseURL, token)
+    client.SetHTTPClient(&http.Client{
+        Timeout: 60 * time.Second,
+    })
+
+    // Use context timeouts for operations
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+    
+    container, err := client.Containers.Create(ctx, req)
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    # Set timeout in client constructor
+    async with RexecClient(
+        base_url=base_url,
+        token=token,
+        timeout=60.0  # 60 seconds
+    ) as client:
+        container = await client.containers.create("ubuntu:24.04")
+    ```
+  </Tab>
+  <Tab title="TypeScript">
+    ```typescript
+    const client = new RexecClient({
+      baseURL,
+      token,
+      fetch: (url, init) => {
+        return fetch(url, {
+          ...init,
+          signal: AbortSignal.timeout(30000), // 30 seconds
+        });
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Security
+
+### Never Hardcode API Tokens
+
+Always use environment variables or secret management systems.
+
+<Warning>
+**DO NOT** commit API tokens to version control. Use `.env` files and add them to `.gitignore`.
+</Warning>
+
+<CodeGroup>
+```typescript TypeScript
+// Good: Environment variables
+const client = new RexecClient({
+  baseURL: process.env.REXEC_URL!,
+  token: process.env.REXEC_TOKEN!,
+});
+
+// Better: Secret management service
+import { SecretManager } from '@google-cloud/secret-manager';
+
+const secrets = new SecretManager();
+const [token] = await secrets.accessSecretVersion({
+  name: 'projects/my-project/secrets/rexec-token/versions/latest',
+});
+
+const client = new RexecClient({
+  baseURL: process.env.REXEC_URL!,
+  token: token.payload.data.toString(),
+});
+```
+
+```python Python
+# Good: Environment variables
+import os
+from rexec import RexecClient
+
+client = RexecClient(
+    base_url=os.environ["REXEC_URL"],
+    token=os.environ["REXEC_TOKEN"]
+)
+
+# Better: AWS Secrets Manager
+import boto3
+import json
+
+secrets = boto3.client('secretsmanager')
+response = secrets.get_secret_value(SecretId='rexec-token')
+token = json.loads(response['SecretString'])['token']
+
+client = RexecClient(base_url=os.environ["REXEC_URL"], token=token)
+```
+
+```go Go
+// Good: Environment variables
+import "os"
+
+client := rexec.NewClient(
+    os.Getenv("REXEC_URL"),
+    os.Getenv("REXEC_TOKEN"),
+)
+
+// Better: Vault integration
+import "github.com/hashicorp/vault/api"
+
+vaultClient, _ := api.NewClient(api.DefaultConfig())
+secret, _ := vaultClient.Logical().Read("secret/data/rexec")
+token := secret.Data["data"].(map[string]interface{})["token"].(string)
+
+client := rexec.NewClient(os.Getenv("REXEC_URL"), token)
+```
+</CodeGroup>
+
+### Validate User Input
+
+Sanitize and validate all user input before passing to containers.
+
+```typescript
+import { z } from 'zod';
+
+const codeExecutionSchema = z.object({
+  code: z.string().max(10000), // Limit code size
+  language: z.enum(['python', 'javascript', 'go']),
+  timeout: z.number().min(1).max(300), // 1-300 seconds
+});
+
+async function executeCode(input: unknown) {
+  // Validate input
+  const { code, language, timeout } = codeExecutionSchema.parse(input);
+  
+  // Sanitize code (remove dangerous patterns)
+  if (code.includes('rm -rf') || code.includes(':(){ :|:& };:')) {
+    throw new Error('Dangerous code detected');
+  }
+  
+  const container = await client.containers.create({
+    image: imageMap[language],
+    labels: { type: 'code-execution' },
+  });
+  
+  // Execute with timeout
+  // ...
+}
+```
+
+### Use Resource Limits
+
+When available, set CPU and memory limits to prevent resource exhaustion.
+
+```typescript
+const container = await client.containers.create({
+  image: 'ubuntu:24.04',
+  labels: {
+    'max-cpu': '1',
+    'max-memory': '512m',
+  },
+});
+```
+
+## Resource Management
+
+### Always Clean Up Containers
+
+Delete containers when done to prevent resource leaks.
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    func processRequest(ctx context.Context) error {
+        container, err := client.Containers.Create(ctx, req)
+        if err != nil {
+            return err
+        }
+        defer client.Containers.Delete(ctx, container.ID)
+        
+        // Perform operations
+        return nil
+    }
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def process_request():
+        async with RexecClient(base_url, token) as client:
+            container = await client.containers.create("ubuntu:24.04")
+            try:
+                # Perform operations
+                pass
+            finally:
+                await client.containers.delete(container.id)
+    ```
+  </Tab>
+  <Tab title="TypeScript">
+    ```typescript
+    async function processRequest() {
+      const container = await client.containers.create({
+        image: 'ubuntu:24.04',
+      });
+      
+      try {
+        // Perform operations
+      } finally {
+        await client.containers.delete(container.id);
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="C#">
+    ```csharp
+    public async Task ProcessRequestAsync()
+    {
+        var container = await client.Containers.CreateAsync("ubuntu:24.04");
+        
+        try
+        {
+            // Perform operations
+        }
+        finally
+        {
+            await client.Containers.DeleteAsync(container.Id);
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Use Connection Pooling
+
+For high-volume applications, configure connection pooling.
+
+```go
+client := rexec.NewClient(baseURL, token)
+client.SetHTTPClient(&http.Client{
+    Timeout: 30 * time.Second,
+    Transport: &http.Transport{
+        MaxIdleConns:        100,
+        MaxIdleConnsPerHost: 10,
+        IdleConnTimeout:     90 * time.Second,
+    },
+})
+```
+
+### Implement Container Lifecycle Management
+
+Track container lifecycles and clean up orphaned containers.
+
+```typescript
+class ContainerPool {
+  private containers = new Map<string, Container>();
+  
+  async create(options: CreateContainerRequest): Promise<Container> {
+    const container = await client.containers.create(options);
+    this.containers.set(container.id, container);
+    
+    // Auto-cleanup after 1 hour
+    setTimeout(() => this.cleanup(container.id), 3600000);
+    
+    return container;
+  }
+  
+  async cleanup(id: string): Promise<void> {
+    try {
+      await client.containers.delete(id);
+      this.containers.delete(id);
+    } catch (error) {
+      console.error(`Failed to cleanup container ${id}:`, error);
+    }
+  }
+  
+  async cleanupAll(): Promise<void> {
+    await Promise.all(
+      Array.from(this.containers.keys()).map(id => this.cleanup(id))
+    );
+  }
+}
+```
+
+## Error Handling
+
+### Implement Retry Logic
+
+Retry transient errors with exponential backoff.
+
+```typescript
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3
+): Promise<T> {
+  let lastError: Error;
+  
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      
+      if (error instanceof RexecError) {
+        // Don't retry client errors (4xx)
+        if (error.statusCode >= 400 && error.statusCode < 500) {
+          throw error;
+        }
+      }
+      
+      // Exponential backoff
+      const delay = Math.pow(2, i) * 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  throw lastError;
+}
+
+// Usage
+const container = await withRetry(() =>
+  client.containers.create({ image: 'ubuntu:24.04' })
+);
+```
+
+### Handle Rate Limits
+
+Implement request queuing to respect rate limits.
+
+```typescript
+class RateLimitedClient {
+  private queue: (() => Promise<any>)[] = [];
+  private processing = false;
+  private requestsPerMinute = 100;
+  private interval = 60000 / this.requestsPerMinute;
+  
+  async enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      this.queue.push(async () => {
+        try {
+          const result = await fn();
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
+      });
+      
+      this.processQueue();
+    });
+  }
+  
+  private async processQueue(): Promise<void> {
+    if (this.processing || this.queue.length === 0) return;
+    
+    this.processing = true;
+    
+    while (this.queue.length > 0) {
+      const fn = this.queue.shift()!;
+      await fn();
+      await new Promise(resolve => setTimeout(resolve, this.interval));
+    }
+    
+    this.processing = false;
+  }
+}
+
+// Usage
+const rateLimitedClient = new RateLimitedClient();
+const container = await rateLimitedClient.enqueue(() =>
+  client.containers.create({ image: 'ubuntu:24.04' })
+);
+```
+
+## Performance Optimization
+
+### Batch Operations
+
+Perform operations in parallel when possible.
+
+<CodeGroup>
+```typescript TypeScript
+// Create multiple containers in parallel
+const containers = await Promise.all([
+  client.containers.create({ image: 'node:20' }),
+  client.containers.create({ image: 'python:3.12' }),
+  client.containers.create({ image: 'golang:1.22' }),
+]);
+
+// Start them all
+await Promise.all(
+  containers.map(c => client.containers.start(c.id))
+);
+```
+
+```python Python
+import asyncio
+
+# Create multiple containers in parallel
+containers = await asyncio.gather(
+    client.containers.create("node:20"),
+    client.containers.create("python:3.12"),
+    client.containers.create("golang:1.22"),
+)
+
+# Start them all
+await asyncio.gather(
+    *[client.containers.start(c.id) for c in containers]
+)
+```
+
+```go Go
+import "golang.org/x/sync/errgroup"
+
+func createBatch(ctx context.Context, images []string) ([]*rexec.Container, error) {
+    var containers []*rexec.Container
+    var mu sync.Mutex
+    
+    g, ctx := errgroup.WithContext(ctx)
+    
+    for _, image := range images {
+        image := image // Capture loop variable
+        g.Go(func() error {
+            container, err := client.Containers.Create(ctx, &rexec.CreateContainerRequest{
+                Image: image,
+            })
+            if err != nil {
+                return err
+            }
+            
+            mu.Lock()
+            containers = append(containers, container)
+            mu.Unlock()
+            
+            return nil
+        })
+    }
+    
+    if err := g.Wait(); err != nil {
+        return nil, err
+    }
+    
+    return containers, nil
+}
+```
+</CodeGroup>
+
+### Cache Container Images
+
+Reuse containers when possible instead of creating new ones.
+
+```typescript
+class ContainerCache {
+  private cache = new Map<string, string>(); // image -> containerId
+  
+  async getOrCreate(image: string): Promise<string> {
+    let containerId = this.cache.get(image);
+    
+    if (containerId) {
+      try {
+        // Verify container still exists
+        await client.containers.get(containerId);
+        return containerId;
+      } catch (error) {
+        this.cache.delete(image);
+      }
+    }
+    
+    // Create new container
+    const container = await client.containers.create({ image });
+    this.cache.set(image, container.id);
+    return container.id;
+  }
+}
+```
+
+## Monitoring and Logging
+
+### Log Operations
+
+Log all container operations for debugging and auditing.
+
+```typescript
+import { RexecClient } from '@pipeopshq/rexec';
+import winston from 'winston';
+
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.json(),
+  transports: [new winston.transports.Console()],
+});
+
+class LoggedRexecClient {
+  constructor(private client: RexecClient) {}
+  
+  async createContainer(options: CreateContainerRequest) {
+    logger.info('Creating container', { image: options.image });
+    
+    try {
+      const container = await this.client.containers.create(options);
+      logger.info('Container created', { id: container.id });
+      return container;
+    } catch (error) {
+      logger.error('Failed to create container', { error, options });
+      throw error;
+    }
+  }
+}
+```
+
+### Track Metrics
+
+Monitor container creation, lifecycle, and errors.
+
+```typescript
+import { Counter, Histogram } from 'prom-client';
+
+const containerCreations = new Counter({
+  name: 'rexec_container_creations_total',
+  help: 'Total number of container creations',
+  labelNames: ['image', 'status'],
+});
+
+const containerDuration = new Histogram({
+  name: 'rexec_container_duration_seconds',
+  help: 'Container lifetime duration',
+  buckets: [1, 5, 15, 30, 60, 300, 600],
+});
+
+async function createContainer(image: string) {
+  const start = Date.now();
+  
+  try {
+    const container = await client.containers.create({ image });
+    containerCreations.inc({ image, status: 'success' });
+    return container;
+  } catch (error) {
+    containerCreations.inc({ image, status: 'error' });
+    throw error;
+  } finally {
+    const duration = (Date.now() - start) / 1000;
+    containerDuration.observe(duration);
+  }
+}
+```
+
+## Testing
+
+### Mock SDK for Unit Tests
+
+Create mock clients for testing without real containers.
+
+```typescript
+import { RexecClient } from '@pipeopshq/rexec';
+import { vi } from 'vitest';
+
+// Mock client
+const mockClient = {
+  containers: {
+    create: vi.fn().mockResolvedValue({ id: 'test-id', name: 'test' }),
+    delete: vi.fn().mockResolvedValue(undefined),
+    start: vi.fn().mockResolvedValue(undefined),
+  },
+} as unknown as RexecClient;
+
+// Use in tests
+test('should create container', async () => {
+  const container = await mockClient.containers.create({ image: 'ubuntu' });
+  expect(container.id).toBe('test-id');
+});
+```
+
+### Integration Tests
+
+Use real Rexec instances for integration tests.
+
+```typescript
+import { RexecClient } from '@pipeopshq/rexec';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
+
+describe('Rexec Integration', () => {
+  let client: RexecClient;
+  const containersToCleanup: string[] = [];
+  
+  beforeEach(() => {
+    client = new RexecClient({
+      baseURL: process.env.REXEC_URL!,
+      token: process.env.REXEC_TOKEN!,
+    });
+  });
+  
+  afterEach(async () => {
+    // Cleanup all created containers
+    await Promise.all(
+      containersToCleanup.map(id => 
+        client.containers.delete(id).catch(() => {})
+      )
+    );
+    containersToCleanup.length = 0;
+  });
+  
+  it('should create and delete container', async () => {
+    const container = await client.containers.create({ image: 'ubuntu:24.04' });
+    containersToCleanup.push(container.id);
+    
+    expect(container.id).toBeTruthy();
+    expect(container.image).toBe('ubuntu:24.04');
+    
+    await client.containers.delete(container.id);
+  });
+});
+```
+
+## Rate Limits Reference
+
+<Card title="API Rate Limits" icon="gauge">
+  - **Container creation**: 10 per minute per user
+  - **API requests**: 100 per minute per user
+  - **WebSocket connections**: 5 concurrent per user
+  - **File uploads**: 100 MB per file
+  - **Container lifetime**: 24 hours maximum (configurable)
+</Card>
+
+<Warning>
+Exceeding rate limits returns `429 Too Many Requests`. Implement exponential backoff for retries.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/sdks/error-handling">
+    Learn comprehensive error handling patterns
+  </Card>
+  <Card title="Use Cases" icon="lightbulb" href="/sdks/use-cases">
+    Explore real-world implementation examples
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference">
+    Complete API documentation
+  </Card>
+  <Card title="Security Guide" icon="shield" href="/security">
+    Security best practices and guidelines
+  </Card>
+</CardGroup>

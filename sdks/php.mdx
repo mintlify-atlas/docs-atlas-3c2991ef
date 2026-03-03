@@ -1,0 +1,835 @@
+---
+title: PHP SDK
+description: Official PHP SDK for Rexec - Build container orchestration with modern PHP
+---
+
+## Installation
+
+Install the PHP SDK using Composer:
+
+```bash
+composer require pipeopshq/rexec
+```
+
+**Requirements:** PHP 8.0 or later
+
+**Dependencies:**
+- `guzzlehttp/guzzle` for HTTP requests
+- `ratchet/pawl` for WebSocket connections (optional, for terminal support)
+
+## Quick Start
+
+```php
+<?php
+require 'vendor/autoload.php';
+
+use Rexec\RexecClient;
+
+// Create client
+$client = new RexecClient(
+    getenv('REXEC_URL'),
+    getenv('REXEC_TOKEN')
+);
+
+// Create a container
+$container = $client->containers()->create('ubuntu:24.04');
+echo "Created: {$container->id}\n";
+
+// Execute a command
+$result = $client->containers()->exec($container->id, "echo 'Hello from PHP!'");
+echo $result->stdout;
+
+// Clean up
+$client->containers()->delete($container->id);
+```
+
+## Client Initialization
+
+### Basic Client Creation
+
+```php
+use Rexec\RexecClient;
+
+$client = new RexecClient(
+    'https://your-rexec-instance.com',
+    'your-api-token'
+);
+```
+
+### With Custom Options
+
+```php
+$client = new RexecClient(
+    getenv('REXEC_URL'),
+    getenv('REXEC_TOKEN'),
+    [
+        'timeout' => 60,        // Request timeout in seconds
+        'connect_timeout' => 10 // Connection timeout
+    ]
+);
+```
+
+### Using Guzzle Options
+
+```php
+use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Middleware;
+
+$stack = HandlerStack::create();
+$stack->push(Middleware::log($logger, $messageFormatter));
+
+$client = new RexecClient(
+    getenv('REXEC_URL'),
+    getenv('REXEC_TOKEN'),
+    ['handler' => $stack]
+);
+```
+
+## Container Operations
+
+The `containers()` service provides methods for managing sandboxed environments.
+
+### Create Container
+
+<CodeGroup>
+```php Basic
+$container = $client->containers()->create('ubuntu:24.04');
+```
+
+```php With Options
+$container = $client->containers()->create('node:20', [
+    'name' => 'my-node-sandbox',
+    'environment' => [
+        'NODE_ENV' => 'production',
+        'API_KEY' => getenv('API_KEY')
+    ],
+    'labels' => [
+        'project' => 'demo',
+        'owner' => 'engineering'
+    ]
+]);
+```
+
+```php Array Syntax
+$options = [
+    'image' => 'python:3.12',
+    'name' => 'ml-worker',
+    'environment' => [
+        'PYTHONPATH' => '/app',
+        'CUDA_VISIBLE_DEVICES' => '0'
+    ],
+    'labels' => [
+        'type' => 'ml',
+        'gpu' => 'true'
+    ]
+];
+
+$container = $client->containers()->create(
+    $options['image'],
+    $options
+);
+```
+</CodeGroup>
+
+### List Containers
+
+```php
+$containers = $client->containers()->list();
+
+foreach ($containers as $c) {
+    echo "{$c->name}: {$c->status}\n";
+}
+```
+
+### Get Container
+
+```php
+use Rexec\RexecException;
+
+try {
+    $container = $client->containers()->get($containerId);
+    
+    echo "Container: {$container->name}\n";
+    echo "Status: {$container->status}\n";
+    echo "Created: {$container->created_at}\n";
+} catch (RexecException $e) {
+    if ($e->isApiError()) {
+        echo "API Error {$e->getStatusCode()}: {$e->getMessage()}\n";
+    }
+}
+```
+
+### Lifecycle Management
+
+<CodeGroup>
+```php Start
+$client->containers()->start($containerId);
+echo "Container started\n";
+```
+
+```php Stop
+$client->containers()->stop($containerId);
+echo "Container stopped\n";
+```
+
+```php Delete
+$client->containers()->delete($containerId);
+echo "Container deleted\n";
+```
+</CodeGroup>
+
+### Execute Commands
+
+<CodeGroup>
+```php String Command
+$result = $client->containers()->exec($containerId, "ls -la");
+
+if ($result->exit_code === 0) {
+    echo $result->stdout;
+} else {
+    echo "Error: {$result->stderr}\n";
+}
+```
+
+```php Array Command
+$result = $client->containers()->exec(
+    $containerId,
+    ['python', 'script.py', '--arg', 'value']
+);
+```
+</CodeGroup>
+
+## File Operations
+
+The `files()` service enables file management within containers.
+
+### List Files
+
+```php
+$files = $client->files()->list($containerId, '/home');
+
+foreach ($files as $f) {
+    $icon = $f->is_dir ? '📁' : '📄';
+    echo "{$icon} {$f->name} ({$f->size} bytes)\n";
+}
+```
+
+### Download Files
+
+```php
+// Read as string
+$content = $client->files()->read($containerId, '/etc/hostname');
+echo $content;
+
+// Download as bytes
+$data = $client->files()->download($containerId, '/etc/passwd');
+
+// Save to file
+file_put_contents('passwd.txt', $data);
+```
+
+### Upload Files
+
+```php
+// Write string
+$client->files()->write(
+    $containerId,
+    '/home/script.php',
+    "<?php echo 'hello world';\n"
+);
+
+// Upload from file
+$content = file_get_contents('local_file.txt');
+$client->files()->upload($containerId, '/home/remote.txt', $content);
+```
+
+### Create Directory
+
+```php
+$client->files()->mkdir($containerId, '/home/mydir');
+echo "Directory created\n";
+```
+
+### Delete File
+
+```php
+$client->files()->delete($containerId, '/tmp/scratch.txt');
+echo "File deleted\n";
+```
+
+## Terminal Connections
+
+The `terminal()` service provides WebSocket-based terminal access with full PTY support.
+
+### Connect to Terminal
+
+```php
+$terminal = $client->terminal()->connect($containerId);
+```
+
+### Send Commands
+
+```php
+// Send a simple command
+$terminal->write("ls -la\n");
+
+// Send multiple commands
+$commands = [
+    "cd /app\n",
+    "composer install\n",
+    "php artisan serve\n"
+];
+
+foreach ($commands as $cmd) {
+    $terminal->write($cmd);
+}
+```
+
+### Handle Output
+
+```php
+$terminal->onData(function($data) {
+    echo $data;
+});
+
+$terminal->onClose(function() {
+    echo "\nTerminal disconnected\n";
+});
+
+$terminal->onError(function($error) {
+    echo "Error: {$error}\n";
+});
+```
+
+### Resize Terminal
+
+```php
+$terminal->resize(150, 50);
+```
+
+### Close Connection
+
+```php
+$terminal->close();
+```
+
+## Error Handling
+
+The SDK provides structured exception handling:
+
+```php
+use Rexec\RexecException;
+
+try {
+    $container = $client->containers()->get('invalid-id');
+} catch (RexecException $e) {
+    if ($e->isApiError()) {
+        switch ($e->getStatusCode()) {
+            case 404:
+                echo "Container not found\n";
+                break;
+            case 401:
+                echo "Authentication failed\n";
+                break;
+            default:
+                echo "API Error {$e->getStatusCode()}: {$e->getMessage()}\n";
+        }
+    } else {
+        echo "Connection Error: {$e->getMessage()}\n";
+    }
+}
+```
+
+## Complete Examples
+
+### Laravel Integration
+
+```php
+namespace App\Services;
+
+use Rexec\RexecClient;
+use Illuminate\Support\Facades\Config;
+
+class ContainerService
+{
+    private RexecClient $client;
+    
+    public function __construct()
+    {
+        $this->client = new RexecClient(
+            Config::get('rexec.url'),
+            Config::get('rexec.token')
+        );
+    }
+    
+    public function executeCode(string $language, string $code): array
+    {
+        $imageMap = [
+            'php' => 'php:8.2',
+            'python' => 'python:3.12',
+            'node' => 'node:20'
+        ];
+        
+        $container = $this->client->containers()->create($imageMap[$language]);
+        
+        try {
+            $this->client->containers()->start($container->id);
+            
+            // Write code
+            $this->client->files()->write(
+                $container->id,
+                '/tmp/code',
+                $code
+            );
+            
+            // Execute
+            $result = $this->client->containers()->exec(
+                $container->id,
+                $this->getRunCommand($language)
+            );
+            
+            return [
+                'success' => $result->exit_code === 0,
+                'output' => $result->stdout,
+                'error' => $result->stderr
+            ];
+        } finally {
+            $this->client->containers()->delete($container->id);
+        }
+    }
+    
+    private function getRunCommand(string $language): string
+    {
+        return match($language) {
+            'php' => 'php /tmp/code',
+            'python' => 'python /tmp/code',
+            'node' => 'node /tmp/code',
+            default => throw new \InvalidArgumentException("Unknown language: {$language}")
+        };
+    }
+}
+```
+
+### WordPress Plugin
+
+```php
+<?php
+/**
+ * Plugin Name: Rexec Container Manager
+ * Description: Manage containers from WordPress
+ */
+
+require_once plugin_dir_path(__FILE__) . 'vendor/autoload.php';
+
+use Rexec\RexecClient;
+
+class RexecContainerManager
+{
+    private RexecClient $client;
+    
+    public function __construct()
+    {
+        $this->client = new RexecClient(
+            get_option('rexec_url'),
+            get_option('rexec_token')
+        );
+        
+        add_action('admin_menu', [$this, 'addAdminMenu']);
+        add_action('wp_ajax_create_container', [$this, 'ajaxCreateContainer']);
+    }
+    
+    public function addAdminMenu()
+    {
+        add_menu_page(
+            'Containers',
+            'Containers',
+            'manage_options',
+            'rexec-containers',
+            [$this, 'renderContainersPage']
+        );
+    }
+    
+    public function renderContainersPage()
+    {
+        $containers = $this->client->containers()->list();
+        
+        echo '<div class="wrap"><h1>Containers</h1><table class="wp-list-table">';
+        echo '<thead><tr><th>Name</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+        
+        foreach ($containers as $c) {
+            echo "<tr><td>{$c->name}</td><td>{$c->status}</td>";
+            echo "<td><a href='#' class='delete-container' data-id='{$c->id}'>Delete</a></td></tr>";
+        }
+        
+        echo '</tbody></table></div>';
+    }
+    
+    public function ajaxCreateContainer()
+    {
+        check_ajax_referer('rexec_nonce');
+        
+        $image = sanitize_text_field($_POST['image']);
+        
+        try {
+            $container = $this->client->containers()->create($image);
+            wp_send_json_success(['id' => $container->id]);
+        } catch (\Exception $e) {
+            wp_send_json_error(['message' => $e->getMessage()]);
+        }
+    }
+}
+
+new RexecContainerManager();
+```
+
+### CI/CD Integration
+
+```php
+<?php
+require 'vendor/autoload.php';
+
+use Rexec\RexecClient;
+
+class CIRunner
+{
+    private RexecClient $client;
+    
+    public function __construct(string $baseUrl, string $token)
+    {
+        $this->client = new RexecClient($baseUrl, $token);
+    }
+    
+    public function runTests(string $image, array $commands): bool
+    {
+        $container = $this->client->containers()->create($image, [
+            'environment' => ['CI' => 'true']
+        ]);
+        
+        try {
+            $this->client->containers()->start($container->id);
+            
+            foreach ($commands as $cmd) {
+                $result = $this->client->containers()->exec($container->id, $cmd);
+                
+                if ($result->exit_code !== 0) {
+                    echo "Command failed: {$cmd}\n";
+                    echo "Error: {$result->stderr}\n";
+                    return false;
+                }
+                
+                echo $result->stdout;
+            }
+            
+            return true;
+        } finally {
+            $this->client->containers()->delete($container->id);
+        }
+    }
+}
+
+// Usage
+$runner = new CIRunner(
+    getenv('REXEC_URL'),
+    getenv('REXEC_TOKEN')
+);
+
+$success = $runner->runTests('php:8.2', [
+    'composer install',
+    'vendor/bin/phpunit'
+]);
+
+exit($success ? 0 : 1);
+```
+
+### Batch Processing
+
+```php
+<?php
+use Rexec\RexecClient;
+
+class BatchProcessor
+{
+    private RexecClient $client;
+    
+    public function __construct()
+    {
+        $this->client = new RexecClient(
+            getenv('REXEC_URL'),
+            getenv('REXEC_TOKEN')
+        );
+    }
+    
+    public function processJobs(array $jobs): array
+    {
+        $results = [];
+        
+        foreach ($jobs as $job) {
+            $results[] = $this->processJob($job);
+        }
+        
+        return $results;
+    }
+    
+    private function processJob(array $job): array
+    {
+        try {
+            $container = $this->client->containers()->create($job['image']);
+            $this->client->containers()->start($container->id);
+            
+            try {
+                $result = $this->client->containers()->exec(
+                    $container->id,
+                    $job['command']
+                );
+                
+                return [
+                    'id' => $job['id'],
+                    'success' => $result->exit_code === 0,
+                    'output' => $result->stdout
+                ];
+            } finally {
+                $this->client->containers()->delete($container->id);
+            }
+        } catch (\Exception $e) {
+            return [
+                'id' => $job['id'],
+                'success' => false,
+                'output' => $e->getMessage()
+            ];
+        }
+    }
+}
+
+$processor = new BatchProcessor();
+
+$jobs = [
+    [
+        'id' => 1,
+        'image' => 'python:3.12',
+        'command' => 'python -c "print(1+1)"'
+    ],
+    [
+        'id' => 2,
+        'image' => 'node:20',
+        'command' => 'node -e "console.log(2+2)"'
+    ]
+];
+
+$results = $processor->processJobs($jobs);
+
+foreach ($results as $result) {
+    echo "Job {$result['id']}: ";
+    echo $result['success'] ? "✓ Success" : "✗ Failed";
+    echo "\n{$result['output']}\n";
+}
+```
+
+### PHPUnit Integration
+
+```php
+<?php
+use PHPUnit\Framework\TestCase;
+use Rexec\RexecClient;
+
+class IntegrationTest extends TestCase
+{
+    private static RexecClient $client;
+    private $container;
+    
+    public static function setUpBeforeClass(): void
+    {
+        self::$client = new RexecClient(
+            getenv('REXEC_URL'),
+            getenv('REXEC_TOKEN')
+        );
+    }
+    
+    protected function setUp(): void
+    {
+        $this->container = self::$client->containers()->create('ubuntu:24.04');
+        self::$client->containers()->start($this->container->id);
+    }
+    
+    protected function tearDown(): void
+    {
+        if ($this->container) {
+            self::$client->containers()->delete($this->container->id);
+        }
+    }
+    
+    public function testCommandExecution(): void
+    {
+        $result = self::$client->containers()->exec(
+            $this->container->id,
+            'echo hello'
+        );
+        
+        $this->assertEquals(0, $result->exit_code);
+        $this->assertStringContainsString('hello', $result->stdout);
+    }
+    
+    public function testFileOperations(): void
+    {
+        // Write file
+        self::$client->files()->write(
+            $this->container->id,
+            '/tmp/test.txt',
+            'hello world'
+        );
+        
+        // Read file
+        $content = self::$client->files()->read(
+            $this->container->id,
+            '/tmp/test.txt'
+        );
+        
+        $this->assertEquals('hello world', trim($content));
+    }
+}
+```
+
+## API Reference
+
+### RexecClient
+
+```php
+class RexecClient
+{
+    public function __construct(
+        string $baseUrl,
+        string $token,
+        array $options = []
+    )
+    
+    public function containers(): ContainerService
+    public function files(): FileService
+    public function terminal(): TerminalService
+}
+```
+
+### Types
+
+<ParamField path="Container" type="class">
+  Container instance.
+  
+  <ParamField path="$id" type="string">Container ID</ParamField>
+  <ParamField path="$name" type="string">Container name</ParamField>
+  <ParamField path="$image" type="string">Docker image</ParamField>
+  <ParamField path="$status" type="string">Current status</ParamField>
+  <ParamField path="$created_at" type="string">Creation timestamp</ParamField>
+  <ParamField path="$started_at" type="string|null">Start timestamp</ParamField>
+  <ParamField path="$labels" type="array">Container labels</ParamField>
+  <ParamField path="$environment" type="array">Environment variables</ParamField>
+</ParamField>
+
+<ParamField path="FileInfo" type="class">
+  File metadata.
+  
+  <ParamField path="$name" type="string">File name</ParamField>
+  <ParamField path="$path" type="string">Full path</ParamField>
+  <ParamField path="$size" type="int">File size in bytes</ParamField>
+  <ParamField path="$mode" type="string">File permissions</ParamField>
+  <ParamField path="$mod_time" type="string">Last modification time</ParamField>
+  <ParamField path="$is_dir" type="bool">Whether this is a directory</ParamField>
+</ParamField>
+
+<ParamField path="ExecResult" type="class">
+  Command execution result.
+  
+  <ParamField path="$stdout" type="string">Standard output</ParamField>
+  <ParamField path="$stderr" type="string">Standard error</ParamField>
+  <ParamField path="$exit_code" type="int">Exit code</ParamField>
+</ParamField>
+
+### Services
+
+**ContainerService** - Access via `$client->containers()`
+- `list(): array` - List all containers
+- `get(string $id): Container` - Get container by ID
+- `create(string $image, array $options = []): Container` - Create a container
+- `delete(string $id): void` - Delete a container
+- `start(string $id): void` - Start a container
+- `stop(string $id): void` - Stop a container
+- `exec(string $id, string|array $command): ExecResult` - Execute command
+
+**FileService** - Access via `$client->files()`
+- `list(string $containerId, string $path): array` - List files
+- `read(string $containerId, string $path): string` - Read file
+- `download(string $containerId, string $path): string` - Download file
+- `write(string $containerId, string $path, string $content): void` - Write file
+- `upload(string $containerId, string $path, string $content): void` - Upload file
+- `mkdir(string $containerId, string $path): void` - Create directory
+- `delete(string $containerId, string $path): void` - Delete file
+
+**TerminalService** - Access via `$client->terminal()`
+- `connect(string $containerId, array $options = []): Terminal` - Connect to terminal
+
+**Terminal** methods:
+- `write(string $data): void` - Send data to terminal
+- `onData(callable $handler): void` - Register data handler
+- `onClose(callable $handler): void` - Register close handler
+- `onError(callable $handler): void` - Register error handler
+- `resize(int $cols, int $rows): void` - Resize terminal
+- `close(): void` - Close connection
+
+## Best Practices
+
+<Note>
+**Use Environment Variables** - Never hardcode credentials:
+```php
+$client = new RexecClient(
+    getenv('REXEC_URL'),
+    getenv('REXEC_TOKEN')
+);
+```
+</Note>
+
+<Note>
+**Handle Exceptions** - Always wrap API calls in try-catch blocks:
+```php
+try {
+    $container = $client->containers()->create('ubuntu:24.04');
+} catch (RexecException $e) {
+    // Handle error
+}
+```
+</Note>
+
+<Note>
+**Clean Up Resources** - Use try-finally to ensure cleanup:
+```php
+$container = $client->containers()->create('ubuntu:24.04');
+try {
+    // Use container
+} finally {
+    $client->containers()->delete($container->id);
+}
+```
+</Note>
+
+<Note>
+**Type Declarations** - Use PHP 8+ type hints for better code quality:
+```php
+public function processContainer(Container $container): ExecResult
+{
+    // Type-safe code
+}
+```
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Ruby SDK" icon="gem" href="/sdks/ruby">
+    Explore the Ruby SDK
+  </Card>
+  <Card title="Go SDK" icon="golang" href="/sdks/go">
+    Check out the Go SDK
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    View complete API documentation
+  </Card>
+  <Card title="Examples" icon="code" href="/examples">
+    Browse more code examples
+  </Card>
+</CardGroup>

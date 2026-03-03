@@ -1,0 +1,826 @@
+---
+title: Java SDK
+description: Official Java SDK for Rexec - Build container orchestration with enterprise-grade Java
+---
+
+## Installation
+
+### Maven
+
+Add the dependency to your `pom.xml`:
+
+```xml
+<dependency>
+    <groupId>io.pipeops</groupId>
+    <artifactId>rexec</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
+### Gradle
+
+Add to your `build.gradle`:
+
+```groovy
+implementation 'io.pipeops:rexec:1.0.0'
+```
+
+**Requirements:** Java 17 or later
+
+## Quick Start
+
+```java
+import io.pipeops.rexec.*;
+
+public class Example {
+    public static void main(String[] args) throws RexecException {
+        // Create client
+        RexecClient client = new RexecClient(
+            "https://your-instance.com",
+            "your-api-token"
+        );
+
+        // Create a container
+        Container container = client.containers().create("ubuntu:24.04");
+        System.out.println("Created: " + container.getId());
+
+        // Start it
+        client.containers().start(container.getId());
+
+        // Execute a command
+        ExecResult result = client.containers().exec(
+            container.getId(),
+            "echo 'Hello from Java!'"
+        );
+        System.out.println(result.getStdout());
+
+        // Clean up
+        client.containers().delete(container.getId());
+    }
+}
+```
+
+## Client Initialization
+
+### Basic Client Creation
+
+```java
+import io.pipeops.rexec.RexecClient;
+
+RexecClient client = new RexecClient(
+    "https://your-rexec-instance.com",
+    "your-api-token"
+);
+```
+
+### With Custom Configuration
+
+```java
+import io.pipeops.rexec.RexecClient;
+import io.pipeops.rexec.RexecConfig;
+import java.time.Duration;
+
+RexecConfig config = new RexecConfig.Builder()
+    .baseUrl("https://your-instance.com")
+    .token("your-token")
+    .timeout(Duration.ofSeconds(60))
+    .build();
+
+RexecClient client = new RexecClient(config);
+```
+
+### Thread Safety
+
+The client is thread-safe and can be shared across threads:
+
+```java
+private static final RexecClient CLIENT = new RexecClient(
+    System.getenv("REXEC_URL"),
+    System.getenv("REXEC_TOKEN")
+);
+```
+
+## Container Operations
+
+The `ContainerService` provides methods for managing sandboxed environments.
+
+### Create Container
+
+<CodeGroup>
+```java Basic
+Container container = client.containers().create("ubuntu:24.04");
+```
+
+```java With Options
+CreateContainerRequest request = new CreateContainerRequest("python:3.12")
+    .setName("my-python-sandbox")
+    .addEnv("PYTHONPATH", "/app")
+    .addEnv("API_KEY", System.getenv("API_KEY"))
+    .addLabel("project", "demo")
+    .addLabel("owner", "engineering");
+
+Container container = client.containers().create(request);
+```
+
+```java Builder Pattern
+CreateContainerRequest request = CreateContainerRequest.builder()
+    .image("node:20")
+    .name("web-app")
+    .environment(Map.of(
+        "NODE_ENV", "production",
+        "PORT", "3000"
+    ))
+    .labels(Map.of(
+        "service", "api",
+        "version", "1.0"
+    ))
+    .build();
+
+Container container = client.containers().create(request);
+```
+</CodeGroup>
+
+### List Containers
+
+```java
+List<Container> containers = client.containers().list();
+
+for (Container c : containers) {
+    System.out.println(c.getName() + ": " + c.getStatus());
+}
+```
+
+### Get Container
+
+```java
+try {
+    Container container = client.containers().get(containerId);
+    
+    System.out.println("Container: " + container.getName());
+    System.out.println("Status: " + container.getStatus());
+    System.out.println("Created: " + container.getCreatedAt());
+} catch (RexecException e) {
+    if (e.isApiError()) {
+        System.err.println("API Error " + e.getStatusCode() + ": " + e.getMessage());
+    }
+}
+```
+
+### Lifecycle Management
+
+<CodeGroup>
+```java Start
+client.containers().start(containerId);
+System.out.println("Container started");
+```
+
+```java Stop
+client.containers().stop(containerId);
+System.out.println("Container stopped");
+```
+
+```java Delete
+client.containers().delete(containerId);
+System.out.println("Container deleted");
+```
+</CodeGroup>
+
+### Execute Commands
+
+<CodeGroup>
+```java String Command
+ExecResult result = client.containers().exec(
+    containerId,
+    "ls -la"
+);
+
+if (result.isSuccess()) {
+    System.out.println(result.getStdout());
+} else {
+    System.err.println(result.getStderr());
+}
+```
+
+```java Array Command
+ExecResult result = client.containers().exec(
+    containerId,
+    new String[]{"python", "script.py", "--arg", "value"}
+);
+```
+</CodeGroup>
+
+## File Operations
+
+The `FileService` enables file management within containers.
+
+### List Files
+
+```java
+List<FileInfo> files = client.files().list(containerId, "/home");
+
+for (FileInfo f : files) {
+    String icon = f.isDirectory() ? "📁" : "📄";
+    System.out.println(icon + " " + f.getName() + " (" + f.getSize() + " bytes)");
+}
+```
+
+### Download Files
+
+```java
+import java.nio.file.Files;
+import java.nio.file.Paths;
+
+// Read as string
+String content = client.files().readString(containerId, "/etc/hostname");
+System.out.println(content);
+
+// Download as bytes
+byte[] data = client.files().read(containerId, "/etc/passwd");
+
+// Save to file
+Files.write(Paths.get("passwd.txt"), data);
+```
+
+### Upload Files
+
+```java
+import java.nio.file.Files;
+import java.nio.file.Paths;
+
+// Write string
+client.files().write(
+    containerId,
+    "/home/script.py",
+    "print('hello world')"
+);
+
+// Upload from file
+byte[] content = Files.readAllBytes(Paths.get("local_file.txt"));
+client.files().write(containerId, "/home/remote.txt", content);
+```
+
+### Create Directory
+
+```java
+client.files().mkdir(containerId, "/home/mydir");
+System.out.println("Directory created");
+```
+
+### Delete File
+
+```java
+client.files().delete(containerId, "/tmp/scratch.txt");
+System.out.println("File deleted");
+```
+
+## Terminal Connections
+
+The `TerminalService` provides WebSocket-based terminal access with full PTY support.
+
+### Connect to Terminal
+
+```java
+Terminal terminal = client.terminal().connect(containerId);
+```
+
+### Send Commands
+
+```java
+// Send a simple command
+terminal.write("ls -la\n");
+
+// Send multiple commands
+String[] commands = {
+    "cd /app\n",
+    "mvn clean install\n",
+    "java -jar target/app.jar\n"
+};
+
+for (String cmd : commands) {
+    terminal.write(cmd);
+}
+```
+
+### Handle Output
+
+```java
+terminal.onData(data -> System.out.print(data))
+        .onClose(() -> System.out.println("Disconnected"))
+        .onError(e -> System.err.println("Error: " + e.getMessage()));
+```
+
+### Resize Terminal
+
+```java
+terminal.resize(120, 40);
+```
+
+### Close Connection
+
+```java
+terminal.close();
+```
+
+## Error Handling
+
+The SDK provides structured exception handling:
+
+```java
+try {
+    Container container = client.containers().get("invalid-id");
+} catch (RexecException e) {
+    if (e.isApiError()) {
+        switch (e.getStatusCode()) {
+            case 404:
+                System.out.println("Container not found");
+                break;
+            case 401:
+                System.out.println("Authentication failed");
+                break;
+            default:
+                System.err.println("API Error " + e.getStatusCode() + ": " + e.getMessage());
+        }
+    } else {
+        System.err.println("Network error: " + e.getMessage());
+    }
+}
+```
+
+## Complete Examples
+
+### CI/CD Integration
+
+```java
+import io.pipeops.rexec.*;
+import java.util.List;
+
+public class CIRunner {
+    private final RexecClient client;
+    
+    public CIRunner(String baseUrl, String token) {
+        this.client = new RexecClient(baseUrl, token);
+    }
+    
+    public boolean runTests(String image, List<String> commands) throws RexecException {
+        CreateContainerRequest request = new CreateContainerRequest(image)
+            .addEnv("CI", "true");
+        
+        Container container = client.containers().create(request);
+        
+        try {
+            client.containers().start(container.getId());
+            
+            for (String cmd : commands) {
+                ExecResult result = client.containers().exec(container.getId(), cmd);
+                
+                if (!result.isSuccess()) {
+                    System.err.println("Command failed: " + cmd);
+                    System.err.println(result.getStderr());
+                    return false;
+                }
+                
+                System.out.println(result.getStdout());
+            }
+            
+            return true;
+        } finally {
+            client.containers().delete(container.getId());
+        }
+    }
+    
+    public static void main(String[] args) throws RexecException {
+        CIRunner runner = new CIRunner(
+            System.getenv("REXEC_URL"),
+            System.getenv("REXEC_TOKEN")
+        );
+        
+        boolean success = runner.runTests("maven:3.9-eclipse-temurin-17", List.of(
+            "mvn clean install",
+            "mvn test"
+        ));
+        
+        System.exit(success ? 0 : 1);
+    }
+}
+```
+
+### Code Execution Service
+
+```java
+import io.pipeops.rexec.*;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.http.ResponseEntity;
+
+@RestController
+@RequestMapping("/api/execute")
+public class CodeExecutionController {
+    private final RexecClient client;
+    
+    public CodeExecutionController() {
+        this.client = new RexecClient(
+            System.getenv("REXEC_URL"),
+            System.getenv("REXEC_TOKEN")
+        );
+    }
+    
+    @PostMapping
+    public ResponseEntity<ExecutionResult> executeCode(@RequestBody CodeRequest request) {
+        try {
+            CreateContainerRequest containerReq = new CreateContainerRequest(
+                request.getLanguageImage()
+            )
+            .addLabel("type", "execution");
+            
+            Container container = client.containers().create(containerReq);
+            
+            try {
+                client.containers().start(container.getId());
+                
+                // Write user code to file
+                client.files().write(
+                    container.getId(),
+                    "/tmp/code." + request.getExtension(),
+                    request.getCode()
+                );
+                
+                // Execute with timeout
+                ExecResult result = client.containers().exec(
+                    container.getId(),
+                    request.getRunCommand()
+                );
+                
+                return ResponseEntity.ok(new ExecutionResult(
+                    result.getStdout(),
+                    result.getStderr(),
+                    result.getExitCode()
+                ));
+            } finally {
+                client.containers().delete(container.getId());
+            }
+        } catch (RexecException e) {
+            return ResponseEntity.status(500)
+                .body(new ExecutionResult(null, e.getMessage(), -1));
+        }
+    }
+}
+```
+
+### JUnit Integration Testing
+
+```java
+import io.pipeops.rexec.*;
+import org.junit.jupiter.api.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+public class IntegrationTest {
+    private static RexecClient client;
+    private Container container;
+    
+    @BeforeAll
+    static void setupClient() {
+        client = new RexecClient(
+            System.getenv("REXEC_URL"),
+            System.getenv("REXEC_TOKEN")
+        );
+    }
+    
+    @BeforeEach
+    void createContainer() throws RexecException {
+        container = client.containers().create("ubuntu:24.04");
+        client.containers().start(container.getId());
+    }
+    
+    @AfterEach
+    void cleanupContainer() throws RexecException {
+        if (container != null) {
+            client.containers().delete(container.getId());
+        }
+    }
+    
+    @Test
+    void testCommandExecution() throws RexecException {
+        ExecResult result = client.containers().exec(
+            container.getId(),
+            "echo hello"
+        );
+        
+        assertTrue(result.isSuccess());
+        assertTrue(result.getStdout().contains("hello"));
+    }
+    
+    @Test
+    void testFileOperations() throws RexecException {
+        // Write file
+        client.files().write(
+            container.getId(),
+            "/tmp/test.txt",
+            "hello world"
+        );
+        
+        // Read file
+        String content = client.files().readString(
+            container.getId(),
+            "/tmp/test.txt"
+        );
+        
+        assertEquals("hello world", content.trim());
+    }
+}
+```
+
+### Microservices Testing Framework
+
+```java
+import io.pipeops.rexec.*;
+import java.util.*;
+import java.util.concurrent.*;
+
+public class MicroserviceTestFramework {
+    private final RexecClient client;
+    private final Map<String, Container> services = new ConcurrentHashMap<>();
+    
+    public MicroserviceTestFramework() {
+        this.client = new RexecClient(
+            System.getenv("REXEC_URL"),
+            System.getenv("REXEC_TOKEN")
+        );
+    }
+    
+    public void startService(String name, String image, Map<String, String> env) 
+            throws RexecException {
+        CreateContainerRequest request = new CreateContainerRequest(image)
+            .setName(name)
+            .setEnvironment(env);
+        
+        Container container = client.containers().create(request);
+        client.containers().start(container.getId());
+        services.put(name, container);
+        
+        System.out.println("Started " + name);
+    }
+    
+    public ExecResult execInService(String name, String command) throws RexecException {
+        Container container = services.get(name);
+        if (container == null) {
+            throw new IllegalArgumentException("Service not found: " + name);
+        }
+        return client.containers().exec(container.getId(), command);
+    }
+    
+    public void cleanup() {
+        services.values().forEach(container -> {
+            try {
+                client.containers().delete(container.getId());
+            } catch (RexecException e) {
+                System.err.println("Failed to delete: " + e.getMessage());
+            }
+        });
+    }
+    
+    public static void main(String[] args) throws RexecException {
+        MicroserviceTestFramework framework = new MicroserviceTestFramework();
+        
+        try {
+            // Start services
+            framework.startService("redis", "redis:7", Collections.emptyMap());
+            framework.startService("postgres", "postgres:16", 
+                Map.of("POSTGRES_PASSWORD", "test"));
+            
+            // Wait for services to be ready
+            Thread.sleep(5000);
+            
+            // Run tests
+            ExecResult redisTest = framework.execInService(
+                "redis",
+                "redis-cli SET test hello"
+            );
+            System.out.println("Redis test: " + redisTest.getStdout());
+            
+            System.out.println("All tests passed!");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            framework.cleanup();
+        }
+    }
+}
+```
+
+### Batch Processing System
+
+```java
+import io.pipeops.rexec.*;
+import java.util.concurrent.*;
+import java.util.stream.*;
+
+public class BatchProcessor {
+    private final RexecClient client;
+    private final ExecutorService executor;
+    
+    public BatchProcessor(int threads) {
+        this.client = new RexecClient(
+            System.getenv("REXEC_URL"),
+            System.getenv("REXEC_TOKEN")
+        );
+        this.executor = Executors.newFixedThreadPool(threads);
+    }
+    
+    public List<TaskResult> processBatch(List<Task> tasks) {
+        List<CompletableFuture<TaskResult>> futures = tasks.stream()
+            .map(task -> CompletableFuture.supplyAsync(
+                () -> processTask(task),
+                executor
+            ))
+            .collect(Collectors.toList());
+        
+        return futures.stream()
+            .map(CompletableFuture::join)
+            .collect(Collectors.toList());
+    }
+    
+    private TaskResult processTask(Task task) {
+        try {
+            Container container = client.containers().create(task.getImage());
+            client.containers().start(container.getId());
+            
+            try {
+                ExecResult result = client.containers().exec(
+                    container.getId(),
+                    task.getCommand()
+                );
+                
+                return new TaskResult(
+                    task.getId(),
+                    result.isSuccess(),
+                    result.getStdout()
+                );
+            } finally {
+                client.containers().delete(container.getId());
+            }
+        } catch (RexecException e) {
+            return new TaskResult(
+                task.getId(),
+                false,
+                e.getMessage()
+            );
+        }
+    }
+    
+    public void shutdown() {
+        executor.shutdown();
+    }
+}
+```
+
+## API Reference
+
+### RexecClient
+
+```java
+public class RexecClient {
+    public RexecClient(String baseUrl, String token)
+    public RexecClient(RexecConfig config)
+    
+    public ContainerService containers()
+    public FileService files()
+    public TerminalService terminal()
+}
+```
+
+### Types
+
+<ParamField path="Container" type="class">
+  Container instance.
+  
+  <ParamField path="getId()" type="String">Container ID</ParamField>
+  <ParamField path="getName()" type="String">Container name</ParamField>
+  <ParamField path="getImage()" type="String">Docker image</ParamField>
+  <ParamField path="getStatus()" type="String">Current status</ParamField>
+  <ParamField path="getCreatedAt()" type="Instant">Creation timestamp</ParamField>
+  <ParamField path="getStartedAt()" type="Instant">Start timestamp</ParamField>
+  <ParamField path="getLabels()" type="Map<String, String>">Container labels</ParamField>
+  <ParamField path="getEnvironment()" type="Map<String, String>">Environment variables</ParamField>
+</ParamField>
+
+<ParamField path="CreateContainerRequest" type="class">
+  Container creation request.
+  
+  <ParamField path="CreateContainerRequest(String image)" type="constructor">Create with image</ParamField>
+  <ParamField path="setName(String)" type="this">Set container name</ParamField>
+  <ParamField path="addEnv(String, String)" type="this">Add environment variable</ParamField>
+  <ParamField path="addLabel(String, String)" type="this">Add label</ParamField>
+  <ParamField path="setEnvironment(Map)" type="this">Set all environment variables</ParamField>
+  <ParamField path="setLabels(Map)" type="this">Set all labels</ParamField>
+</ParamField>
+
+<ParamField path="FileInfo" type="class">
+  File metadata.
+  
+  <ParamField path="getName()" type="String">File name</ParamField>
+  <ParamField path="getPath()" type="String">Full path</ParamField>
+  <ParamField path="getSize()" type="long">File size in bytes</ParamField>
+  <ParamField path="getMode()" type="String">File permissions</ParamField>
+  <ParamField path="getModTime()" type="Instant">Last modification time</ParamField>
+  <ParamField path="isDirectory()" type="boolean">Whether this is a directory</ParamField>
+</ParamField>
+
+<ParamField path="ExecResult" type="class">
+  Command execution result.
+  
+  <ParamField path="getStdout()" type="String">Standard output</ParamField>
+  <ParamField path="getStderr()" type="String">Standard error</ParamField>
+  <ParamField path="getExitCode()" type="int">Exit code</ParamField>
+  <ParamField path="isSuccess()" type="boolean">Whether exit code is 0</ParamField>
+</ParamField>
+
+### Services
+
+**ContainerService** - Access via `client.containers()`
+- `List<Container> list()` - List all containers
+- `Container get(String id)` - Get container by ID
+- `Container create(String image)` - Create a container
+- `Container create(CreateContainerRequest request)` - Create with options
+- `void delete(String id)` - Delete a container
+- `void start(String id)` - Start a container
+- `void stop(String id)` - Stop a container
+- `ExecResult exec(String id, String command)` - Execute command
+- `ExecResult exec(String id, String[] command)` - Execute with array
+
+**FileService** - Access via `client.files()`
+- `List<FileInfo> list(String containerId, String path)` - List files
+- `byte[] read(String containerId, String path)` - Read file
+- `String readString(String containerId, String path)` - Read as string
+- `void write(String containerId, String path, String content)` - Write string
+- `void write(String containerId, String path, byte[] content)` - Write bytes
+- `void mkdir(String containerId, String path)` - Create directory
+- `void delete(String containerId, String path)` - Delete file
+
+**TerminalService** - Access via `client.terminal()`
+- `Terminal connect(String containerId)` - Connect to terminal
+
+**Terminal** methods:
+- `void write(String data)` - Send data to terminal
+- `Terminal onData(Consumer<String> handler)` - Register data handler
+- `Terminal onClose(Runnable handler)` - Register close handler
+- `Terminal onError(Consumer<Throwable> handler)` - Register error handler
+- `void resize(int cols, int rows)` - Resize terminal
+- `void close()` - Close connection
+
+## Best Practices
+
+<Note>
+**Reuse Clients** - The client is thread-safe and should be reused:
+```java
+private static final RexecClient CLIENT = new RexecClient(...);
+```
+</Note>
+
+<Note>
+**Use Try-With-Resources** - Not directly applicable, but use try-finally:
+```java
+Container c = client.containers().create("ubuntu:24.04");
+try {
+    // Use container
+} finally {
+    client.containers().delete(c.getId());
+}
+```
+</Note>
+
+<Note>
+**Handle Exceptions** - Check `isApiError()` for API-specific errors:
+```java
+catch (RexecException e) {
+    if (e.isApiError()) {
+        // Handle API error
+    }
+}
+```
+</Note>
+
+<Note>
+**Use Builders** - Leverage builder patterns for cleaner code:
+```java
+CreateContainerRequest.builder()
+    .image("ubuntu:24.04")
+    .name("my-container")
+    .build();
+```
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title=".NET SDK" icon="microsoft" href="/sdks/dotnet">
+    Explore the .NET SDK
+  </Card>
+  <Card title="Go SDK" icon="golang" href="/sdks/go">
+    Check out the Go SDK
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    View complete API documentation
+  </Card>
+  <Card title="Examples" icon="code" href="/examples">
+    Browse more code examples
+  </Card>
+</CardGroup>

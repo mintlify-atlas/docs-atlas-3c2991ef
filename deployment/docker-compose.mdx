@@ -1,0 +1,437 @@
+---
+title: 'Docker Compose Deployment'
+description: 'Deploy Rexec with Docker Compose for quick self-hosting and development'
+---
+
+## Overview
+
+Docker Compose is the easiest way to run Rexec. This guide will have you up and running in minutes with a complete stack including:
+
+- Rexec API server
+- PostgreSQL database
+- Redis for session management
+- Persistent volumes for data storage
+
+## Prerequisites
+
+<Steps>
+  <Step title="Install Docker">
+    Ensure you have Docker Engine installed on your system:
+    
+    ```bash
+    docker --version
+    docker compose version
+    ```
+    
+    If not installed, follow the [official Docker installation guide](https://docs.docker.com/engine/install/).
+  </Step>
+  
+  <Step title="System Requirements">
+    - 2GB RAM minimum (4GB recommended)
+    - 10GB disk space
+    - Linux, macOS, or Windows with WSL2
+  </Step>
+</Steps>
+
+## Quick Start
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/PipeOpsHQ/rexec.git
+    cd rexec/docker
+    ```
+  </Step>
+  
+  <Step title="Start the stack">
+    ```bash
+    docker compose up --build
+    ```
+    
+    This will:
+    - Build the Rexec container image
+    - Start PostgreSQL and Redis
+    - Initialize the database
+    - Start the API server on port 8080
+  </Step>
+  
+  <Step title="Access the dashboard">
+    Open your browser to:
+    
+    ```
+    http://localhost:8080
+    ```
+    
+    **Default credentials:**
+    - Username: `admin`
+    - Password: `admin`
+    
+    <Warning>
+      Change the default password immediately after first login, especially for production deployments.
+    </Warning>
+  </Step>
+</Steps>
+
+## Docker Compose Configuration
+
+The stack is defined in `docker/docker-compose.yml`:
+
+```yaml docker/docker-compose.yml
+version: "3.8"
+
+services:
+  # Rexec API (connects to remote Docker daemon)
+  rexec:
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+      - "22:22" # SSH Gateway (optional, enable with SSH_GATEWAY_ENABLED=true)
+    environment:
+      - PORT=8080
+      - JWT_SECRET=${JWT_SECRET:-rexec-dev-secret-change-me}
+      - DATABASE_URL=postgres://rexec:${POSTGRES_PASSWORD:-rexec_dev_password}@postgres:5432/rexec?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      # Remote Docker daemon configuration
+      - DOCKER_HOST=${DOCKER_HOST}
+      - DOCKER_TLS_VERIFY=${DOCKER_TLS_VERIFY:-1}
+      - DOCKER_CA_CERT=${DOCKER_CA_CERT}
+      - DOCKER_CLIENT_CERT=${DOCKER_CLIENT_CERT}
+      - DOCKER_CLIENT_KEY=${DOCKER_CLIENT_KEY}
+      # SSH Gateway configuration
+      - SSH_GATEWAY_ENABLED=${SSH_GATEWAY_ENABLED:-false}
+      - SSH_GATEWAY_HOST_KEY=/app/.ssh/host_key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - recordings-data:/app/recordings
+      - ssh-keys:/app/.ssh # SSH host keys (persistent)
+    restart: unless-stopped
+    networks:
+      - rexec-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Redis for session management
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - rexec-network
+
+  # PostgreSQL for user data
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=rexec
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-rexec_dev_password}
+      - POSTGRES_DB=rexec
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rexec -d rexec"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - rexec-network
+
+volumes:
+  redis-data:
+  postgres-data:
+  recordings-data:
+  ssh-keys:
+
+networks:
+  rexec-network:
+    driver: bridge
+```
+
+## Environment Configuration
+
+Create a `.env` file in the `docker/` directory to customize your deployment:
+
+```bash docker/.env
+# Copy from docker/.env.example
+cp .env.example .env
+```
+
+### Required Variables
+
+<ParamField path="JWT_SECRET" type="string" required>
+  Secret key for signing JWT authentication tokens. Generate with:
+  ```bash
+  openssl rand -hex 32
+  ```
+</ParamField>
+
+<ParamField path="POSTGRES_PASSWORD" type="string" required>
+  Password for the PostgreSQL database. Generate with:
+  ```bash
+  openssl rand -hex 16
+  ```
+</ParamField>
+
+### Optional Variables
+
+<ParamField path="DOCKER_HOST" type="string">
+  Remote Docker daemon endpoint. Examples:
+  - `tcp://your-docker-host:2376` (TLS)
+  - `tcp://your-docker-host:2375` (no TLS, not recommended)
+  - `ssh://user@your-docker-host` (via SSH)
+  
+  If not set, uses local Docker daemon via `/var/run/docker.sock`.
+</ParamField>
+
+<ParamField path="DOCKER_TLS_VERIFY" type="string" default="1">
+  Set to `1` to enable TLS verification for remote Docker connections.
+</ParamField>
+
+<ParamField path="SSH_GATEWAY_ENABLED" type="string" default="false">
+  Enable SSH gateway on port 22. Set to `true` to allow SSH access to containers.
+</ParamField>
+
+<ParamField path="DOMAIN" type="string">
+  Your domain name for SSL and redirects (e.g., `rexec.example.com`).
+</ParamField>
+
+<ParamField path="LETSENCRYPT_EMAIL" type="string">
+  Email address for Let's Encrypt SSL certificate notifications.
+</ParamField>
+
+### Billing Configuration (Optional)
+
+<ParamField path="STRIPE_SECRET_KEY" type="string">
+  Stripe API secret key from [dashboard.stripe.com/apikeys](https://dashboard.stripe.com/apikeys).
+</ParamField>
+
+<ParamField path="STRIPE_WEBHOOK_SECRET" type="string">
+  Stripe webhook signing secret for verifying webhook events.
+</ParamField>
+
+<ParamField path="STRIPE_PRICE_PRO" type="string">
+  Stripe Price ID for Pro subscription tier.
+</ParamField>
+
+<ParamField path="STRIPE_PRICE_ENTERPRISE" type="string">
+  Stripe Price ID for Enterprise subscription tier.
+</ParamField>
+
+## Production Deployment
+
+### With Reverse Proxy (Nginx)
+
+<Steps>
+  <Step title="Configure SSL certificates">
+    Update `docker/.env` with your domain:
+    ```bash
+    DOMAIN=rexec.example.com
+    LETSENCRYPT_EMAIL=admin@example.com
+    ```
+  </Step>
+  
+  <Step title="Start with Nginx">
+    The stack includes an Nginx reverse proxy with automatic SSL via Let's Encrypt:
+    
+    ```bash
+    docker compose -f docker-compose.yml -f docker/nginx/docker-compose.nginx.yml up -d
+    ```
+  </Step>
+  
+  <Step title="Verify SSL">
+    Access your deployment at:
+    ```
+    https://rexec.example.com
+    ```
+  </Step>
+</Steps>
+
+### Resource Limits
+
+For production, configure resource limits in `.env`:
+
+```bash .env
+# Maximum containers per tier
+MAX_CONTAINERS_FREE=2
+MAX_CONTAINERS_PRO=5
+MAX_CONTAINERS_ENTERPRISE=20
+
+# Container idle timeout in minutes
+IDLE_TIMEOUT_MINUTES=30
+
+# Default resource limits
+DEFAULT_MEMORY_MB=512
+DEFAULT_CPU_SHARES=512
+DEFAULT_DISK_MB=1024
+```
+
+## Useful Commands
+
+<CodeGroup>
+
+```bash Start in detached mode
+docker compose up -d
+```
+
+```bash View logs
+docker compose logs -f rexec
+```
+
+```bash Restart services
+docker compose restart
+```
+
+```bash Stop all services
+docker compose down
+```
+
+```bash Stop and remove volumes
+docker compose down -v
+```
+
+```bash Rebuild after code changes
+docker compose up --build
+```
+
+```bash Execute database migrations
+docker compose exec rexec rexec migrate
+```
+
+```bash Access PostgreSQL
+docker compose exec postgres psql -U rexec -d rexec
+```
+
+</CodeGroup>
+
+## Health Checks
+
+Verify your deployment is healthy:
+
+```bash
+curl http://localhost:8080/health
+```
+
+Expected response:
+```json
+{
+  "status": "ok",
+  "database": "connected",
+  "docker": "connected"
+}
+```
+
+## Upgrading
+
+<Steps>
+  <Step title="Pull latest changes">
+    ```bash
+    git pull origin main
+    ```
+  </Step>
+  
+  <Step title="Rebuild and restart">
+    ```bash
+    cd docker
+    docker compose up --build -d
+    ```
+  </Step>
+  
+  <Step title="Run migrations">
+    ```bash
+    docker compose exec rexec rexec migrate
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Port Already in Use
+
+If port 8080 is already taken, modify the port mapping in `docker-compose.yml`:
+
+```yaml
+ports:
+  - "8081:8080"  # Host port 8081 -> Container port 8080
+```
+
+### Database Connection Failed
+
+Check PostgreSQL is healthy:
+```bash
+docker compose ps postgres
+docker compose logs postgres
+```
+
+Verify the `DATABASE_URL` format:
+```
+postgres://user:password@host:5432/database?sslmode=disable
+```
+
+### Docker Daemon Not Accessible
+
+If using a remote Docker host:
+1. Verify `DOCKER_HOST` is set correctly
+2. Check TLS certificates are valid
+3. Ensure port 2376 is open on the remote host
+
+```bash
+# Test connection from Rexec container
+docker compose exec rexec docker --tlsverify version
+```
+
+### Container Build Fails
+
+Clear Docker build cache:
+```bash
+docker compose build --no-cache
+```
+
+## Data Persistence
+
+All data is stored in Docker volumes:
+
+| Volume | Purpose |
+|--------|----------|
+| `postgres-data` | PostgreSQL database |
+| `redis-data` | Redis cache and sessions |
+| `recordings-data` | Terminal session recordings |
+| `ssh-keys` | SSH host keys (persistent) |
+
+### Backup
+
+```bash
+# Backup PostgreSQL
+docker compose exec postgres pg_dump -U rexec rexec > backup.sql
+
+# Backup all volumes
+docker run --rm -v rexec_postgres-data:/data -v $(pwd):/backup alpine tar czf /backup/postgres-backup.tar.gz /data
+```
+
+### Restore
+
+```bash
+# Restore PostgreSQL
+cat backup.sql | docker compose exec -T postgres psql -U rexec -d rexec
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/deployment/configuration">
+    Learn about all available environment variables and configuration options
+  </Card>
+  <Card title="PaaS Deployment" icon="cloud" href="/deployment/paas">
+    Deploy to Railway, PipeOps, Render, or Fly.io
+  </Card>
+</CardGroup>

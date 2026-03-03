@@ -1,0 +1,580 @@
+---
+title: Agent Configuration
+description: Configure agent settings, environment variables, and advanced options
+---
+
+## Configuration Files
+
+The agent loads configuration from multiple locations, in order of precedence:
+
+<Steps>
+  <Step title="Command-line flags">
+    Highest priority: `--config`, `--token`, etc.
+  </Step>
+  
+  <Step title="Environment variables">
+    Second priority: `REXEC_TOKEN`, `REXEC_HOST`, etc.
+  </Step>
+  
+  <Step title="Config file">
+    System-wide or user-specific configuration file
+  </Step>
+</Steps>
+
+### Config File Locations
+
+The agent searches for configuration in this order:
+
+1. **Custom path**: `--config /path/to/config` or `REXEC_CONFIG=/path/to/config`
+2. **System-wide**: `/etc/rexec/agent.yaml` (YAML format)
+3. **User-specific**: `~/.rexec/agent.json` (JSON format)
+
+<Note>
+  System-wide YAML configs are typically created by the install script, while user-specific JSON configs are created by the `register` command.
+</Note>
+
+## Configuration Formats
+
+### YAML Format (System-Wide)
+
+Used by `/etc/rexec/agent.yaml`:
+
+```yaml
+api_url: https://rexec.pipeops.io
+token: rexec_...
+agent_id: abc123-def456-...
+name: prod-server-1
+labels:
+  - production
+  - aws
+shell: /bin/bash
+working_dir: /root
+auto_update: true
+```
+
+<ParamField path="api_url" type="string" required>
+  Rexec API host URL
+</ParamField>
+
+<ParamField path="token" type="string" required>
+  Authentication token (API token preferred, starting with `rexec_`)
+</ParamField>
+
+<ParamField path="agent_id" type="string" required>
+  Unique agent identifier (generated during registration)
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Display name for this agent
+</ParamField>
+
+<ParamField path="shell" type="string" default="/bin/bash">
+  Shell to use for terminal sessions
+</ParamField>
+
+<ParamField path="labels" type="array">
+  Tags for organization (e.g., `["production", "aws", "us-east"]`)
+</ParamField>
+
+<ParamField path="working_dir" type="string" default="~">
+  Initial working directory for shell sessions
+</ParamField>
+
+<ParamField path="auto_update" type="boolean" default="false">
+  Enable automatic agent updates
+</ParamField>
+
+### JSON Format (User-Specific)
+
+Used by `~/.rexec/agent.json`:
+
+```json
+{
+  "host": "https://rexec.pipeops.io",
+  "token": "rexec_...",
+  "id": "abc123-def456-...",
+  "name": "prod-server-1",
+  "description": "Production API server",
+  "shell": "/bin/bash",
+  "tags": ["production", "api", "aws"],
+  "registered": true,
+  "auto_start": true,
+  "auto_update": false
+}
+```
+
+## Environment Variables
+
+Environment variables override config file settings:
+
+<ParamField path="REXEC_TOKEN" type="string">
+  Authentication token (overrides config)
+  
+  **Example:**
+  ```bash
+  export REXEC_TOKEN="rexec_your_token_here"
+  rexec-agent start
+  ```
+</ParamField>
+
+<ParamField path="REXEC_HOST" type="string">
+  API host URL (overrides config)
+  
+  **Example:**
+  ```bash
+  export REXEC_HOST="https://rexec.example.com"
+  ```
+</ParamField>
+
+<ParamField path="REXEC_API" type="string">
+  Alias for `REXEC_HOST`
+</ParamField>
+
+<ParamField path="REXEC_CONFIG" type="string">
+  Custom config file path (overrides default search)
+  
+  **Example:**
+  ```bash
+  export REXEC_CONFIG="/opt/rexec/agent.yaml"
+  ```
+</ParamField>
+
+<ParamField path="REXEC_AUTO_UPDATE" type="boolean">
+  Enable auto-updates (`true`, `1`, `yes`, `on`)
+  
+  **Example:**
+  ```bash
+  export REXEC_AUTO_UPDATE="true"
+  ```
+</ParamField>
+
+<ParamField path="REXEC_REGION" type="string">
+  Manual region override for on-prem/local installs
+  
+  **Example:**
+  ```bash
+  export REXEC_REGION="us-west-2"
+  ```
+</ParamField>
+
+<ParamField path="REXEC_DISABLE_GEOIP" type="boolean">
+  Disable IP-based region detection
+  
+  **Example:**
+  ```bash
+  export REXEC_DISABLE_GEOIP="true"
+  ```
+</ParamField>
+
+<ParamField path="REXEC_GEOIP_URL" type="string" default="https://ipinfo.io/json">
+  Custom GeoIP service URL
+</ParamField>
+
+## Shell Configuration
+
+The agent supports any POSIX-compatible shell. It automatically resolves the best available shell:
+
+### Shell Resolution Order
+
+1. **Config file shell** (if not `/bin/sh`)
+2. **User's login shell** (`$SHELL`, if not `/bin/sh`)
+3. **Common shells**: `/bin/zsh`, `/usr/bin/zsh`, `/bin/bash`, `/usr/bin/bash`
+4. **Fallback**: `/bin/sh`
+
+<Note>
+  The agent prefers feature-rich shells (zsh/bash) over plain sh to avoid broken arrow keys and history.
+</Note>
+
+### Supported Shells
+
+<Tabs>
+  <Tab title="Bash">
+    ```yaml
+    shell: /bin/bash
+    ```
+    
+    - **Features**: Command history, tab completion, aliases
+    - **Availability**: Default on most Linux distributions
+    - **Recommended**: Yes (most compatible)
+  </Tab>
+  
+  <Tab title="Zsh">
+    ```yaml
+    shell: /bin/zsh
+    ```
+    
+    - **Features**: Advanced completion, themes, plugins
+    - **Availability**: Common on modern systems
+    - **Recommended**: Yes (best experience with oh-my-zsh)
+  </Tab>
+  
+  <Tab title="Fish">
+    ```yaml
+    shell: /usr/bin/fish
+    ```
+    
+    - **Features**: Syntax highlighting, auto-suggestions
+    - **Availability**: Install separately
+    - **Recommended**: For advanced users
+  </Tab>
+  
+  <Tab title="Sh">
+    ```yaml
+    shell: /bin/sh
+    ```
+    
+    - **Features**: Minimal POSIX compliance
+    - **Availability**: Universal
+    - **Recommended**: Only for constrained environments
+  </Tab>
+</Tabs>
+
+### Shell Arguments
+
+The agent starts shells with these arguments:
+
+- **Bash/Zsh**: `-l -i` (login + interactive)
+- **Sh**: `-i` (interactive only, to avoid sourcing issues)
+
+### Shell Environment
+
+The agent sets these environment variables:
+
+```bash
+TERM=xterm-256color    # Full color support
+REXEC_AGENT=1          # Indicates running under agent
+SHELL=/bin/bash        # Configured shell path
+```
+
+## Token Management
+
+### API Tokens vs JWT Tokens
+
+<Tabs>
+  <Tab title="API Tokens (Recommended)">
+    ```bash
+    rexec_abc123def456...
+    ```
+    
+    **Advantages:**
+    - Never expire (long-lived)
+    - Dedicated for agent use
+    - Can be revoked individually
+    - Scoped permissions
+    
+    **Usage:**
+    ```yaml
+    token: rexec_abc123def456...
+    ```
+  </Tab>
+  
+  <Tab title="JWT Tokens (Not Recommended)">
+    ```bash
+    eyJhbGciOiJIUzI1NiIs...
+    ```
+    
+    **Disadvantages:**
+    - Expire after 24 hours
+    - Require refresh mechanism
+    - Not suitable for persistent agents
+    
+    **Warning:**
+    ```
+    Warning: Using JWT token which expires after 24 hours.
+    Run 'rexec-agent refresh-token' to switch to a permanent API token.
+    ```
+  </Tab>
+</Tabs>
+
+### Refreshing Tokens
+
+If you see 401 errors (token expired), refresh with:
+
+```bash
+rexec-agent refresh-token
+```
+
+This will:
+1. Prompt for a new API token (or use `REXEC_TOKEN`)
+2. Validate the token
+3. Update the config file
+4. Preserve other settings
+
+Example:
+```bash
+# Generate API token at https://rexec.pipeops.io/account/api
+export REXEC_TOKEN="rexec_new_token_here"
+rexec-agent refresh-token
+sudo systemctl restart rexec-agent
+```
+
+<Warning>
+  Always restart the agent service after refreshing tokens:
+  ```bash
+  sudo systemctl restart rexec-agent
+  ```
+</Warning>
+
+## Auto-Update Configuration
+
+The agent supports optional automatic updates:
+
+### Enabling Auto-Update
+
+<CodeGroup>
+```yaml Config File
+auto_update: true
+```
+
+```bash Environment Variable
+export REXEC_AUTO_UPDATE="true"
+```
+</CodeGroup>
+
+### How Auto-Update Works
+
+<Steps>
+  <Step title="Version Check">
+    Agent checks server for latest version on startup
+  </Step>
+  
+  <Step title="Download">
+    If newer version available, downloads from server
+  </Step>
+  
+  <Step title="Verification">
+    Verifies downloaded binary by running `--version`
+  </Step>
+  
+  <Step title="Replace">
+    Atomically replaces current binary with new version
+  </Step>
+  
+  <Step title="Restart">
+    Agent restarts itself with new binary
+  </Step>
+</Steps>
+
+<Note>
+  Auto-update is opt-in for security. Enable only if you trust the Rexec server.
+</Note>
+
+## Region Detection
+
+The agent automatically detects its region for display in the dashboard:
+
+### Detection Methods
+
+<Tabs>
+  <Tab title="Manual Override">
+    ```bash
+    export REXEC_REGION="us-west-2"
+    ```
+    Highest priority - use for on-prem installations
+  </Tab>
+  
+  <Tab title="Cloud Metadata">
+    Automatically detected for:
+    - **AWS**: EC2 instance metadata
+    - **GCP**: Compute Engine metadata
+    - **Azure**: VM metadata
+    - **DigitalOcean**: Droplet metadata
+  </Tab>
+  
+  <Tab title="GeoIP Fallback">
+    If not in cloud, uses IP geolocation:
+    - **Service**: ipinfo.io (default)
+    - **Timeout**: 900ms
+    - **Disable**: `REXEC_DISABLE_GEOIP=true`
+    - **Custom URL**: `REXEC_GEOIP_URL=https://api.example.com`
+  </Tab>
+</Tabs>
+
+### AWS Region Detection
+
+```bash
+# Uses IMDSv2 (token-based)
+http://169.254.169.254/latest/dynamic/instance-identity/document
+```
+
+Automatically handles:
+- IMDSv1 (legacy)
+- IMDSv2 (secure)
+- Availability zone to region mapping
+
+### GCP Region Detection
+
+```bash
+http://metadata.google.internal/computeMetadata/v1/instance/zone
+```
+
+Requires header: `Metadata-Flavor: Google`
+
+### Azure Region Detection
+
+```bash
+http://169.254.169.254/metadata/instance/compute/location?api-version=2021-02-01
+```
+
+Requires header: `Metadata: true`
+
+## Advanced Configuration
+
+### Custom Config Path
+
+```bash
+rexec-agent --config /opt/rexec/agent.yaml start
+```
+
+### Multiple Agents on Same Host
+
+Run multiple agents (different users/projects):
+
+```bash
+# Agent 1 (production)
+REXEC_CONFIG=/etc/rexec/prod.yaml rexec-agent start --daemon
+
+# Agent 2 (staging)
+REXEC_CONFIG=/etc/rexec/staging.yaml rexec-agent start --daemon
+```
+
+<Warning>
+  Ensure each agent has a unique config file and agent_id.
+</Warning>
+
+### Systemd Service with Environment
+
+Edit `/etc/systemd/system/rexec-agent.service`:
+
+```ini
+[Service]
+Environment="REXEC_TOKEN=rexec_..."
+Environment="REXEC_AUTO_UPDATE=true"
+Environment="REXEC_REGION=us-east-1"
+ExecStart=/usr/local/bin/rexec-agent start
+```
+
+Reload and restart:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart rexec-agent
+```
+
+### Security Hardening
+
+<AccordionGroup>
+  <Accordion title="Run as Non-Root User">
+    ```bash
+    # Create dedicated user
+    sudo useradd -r -s /bin/bash -d /var/lib/rexec rexec
+    
+    # Set ownership
+    sudo chown -R rexec:rexec /etc/rexec
+    
+    # Update systemd service
+    sudo sed -i 's/User=root/User=rexec/' /etc/systemd/system/rexec-agent.service
+    sudo systemctl daemon-reload
+    sudo systemctl restart rexec-agent
+    ```
+  </Accordion>
+  
+  <Accordion title="Restrict File Permissions">
+    ```bash
+    # Config file should be readable only by agent user
+    sudo chmod 600 /etc/rexec/agent.yaml
+    sudo chown rexec:rexec /etc/rexec/agent.yaml
+    ```
+  </Accordion>
+  
+  <Accordion title="Use API Tokens Only">
+    ```yaml
+    # Prefer API tokens (start with rexec_)
+    token: rexec_abc123def456...
+    
+    # Avoid JWT tokens (expire in 24 hours)
+    # token: eyJhbGciOiJIUzI1NiIs...
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Configuration Examples
+
+### Production Server
+
+```yaml
+# /etc/rexec/agent.yaml
+api_url: https://rexec.pipeops.io
+token: rexec_prod_token_here
+agent_id: abc123-def456-...
+name: prod-api-1
+labels:
+  - production
+  - api
+  - aws
+  - us-east-1
+shell: /bin/bash
+working_dir: /opt/app
+auto_update: true
+```
+
+### Development Machine
+
+```json
+{
+  "host": "https://rexec.pipeops.io",
+  "token": "rexec_dev_token_here",
+  "id": "xyz789-abc123-...",
+  "name": "macbook-dev",
+  "description": "John's MacBook Pro",
+  "shell": "/bin/zsh",
+  "tags": ["development", "local"],
+  "registered": true,
+  "auto_update": false
+}
+```
+
+### CI/CD Runner
+
+```yaml
+# /etc/rexec/ci-runner.yaml
+api_url: https://rexec.pipeops.io
+token: rexec_ci_token_here
+agent_id: ci-runner-123
+name: github-actions-runner-1
+labels:
+  - ci
+  - github-actions
+  - ephemeral
+shell: /bin/bash
+working_dir: /home/runner
+auto_update: true
+```
+
+### IoT Device (Raspberry Pi)
+
+```yaml
+# /etc/rexec/agent.yaml
+api_url: https://rexec.pipeops.io
+token: rexec_iot_token_here
+agent_id: rpi-sensor-hub-1
+name: raspberry-pi-sensor-hub
+labels:
+  - iot
+  - sensors
+  - edge
+shell: /bin/bash
+working_dir: /home/pi
+auto_update: false  # Disable on constrained devices
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Troubleshooting" icon="wrench" href="/agent/troubleshooting">
+    Common issues and solutions
+  </Card>
+  
+  <Card title="Overview" icon="book" href="/agent/overview">
+    Learn how agents work
+  </Card>
+</CardGroup>

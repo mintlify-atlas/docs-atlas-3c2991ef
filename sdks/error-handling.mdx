@@ -1,0 +1,631 @@
+---
+title: Error Handling
+description: Comprehensive guide to handling errors across all Rexec SDKs
+---
+
+All Rexec SDKs provide structured error handling to help you build robust applications. This guide covers error types, handling patterns, and best practices for each SDK.
+
+## Error Types
+
+Rexec SDKs expose different error types depending on the failure mode:
+
+<AccordionGroup>
+  <Accordion title="API Errors (4xx/5xx)">
+    HTTP errors returned by the Rexec API, including:
+    - `400 Bad Request` - Invalid request parameters
+    - `401 Unauthorized` - Invalid or expired token
+    - `403 Forbidden` - Insufficient permissions
+    - `404 Not Found` - Resource doesn't exist
+    - `429 Too Many Requests` - Rate limit exceeded
+    - `500 Internal Server Error` - Server error
+  </Accordion>
+  
+  <Accordion title="Network Errors">
+    Connection failures, timeouts, or DNS resolution errors when reaching the Rexec instance.
+  </Accordion>
+  
+  <Accordion title="WebSocket Errors">
+    Terminal connection failures, including disconnections and protocol errors.
+  </Accordion>
+  
+  <Accordion title="Validation Errors">
+    Client-side validation failures before making API requests.
+  </Accordion>
+</AccordionGroup>
+
+## SDK-Specific Error Handling
+
+### Go SDK
+
+The Go SDK returns structured errors that implement the standard `error` interface.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    rexec "github.com/PipeOpsHQ/rexec-go"
+)
+
+func main() {
+    client := rexec.NewClient(baseURL, token)
+    ctx := context.Background()
+    
+    container, err := client.Containers.Get(ctx, "invalid-id")
+    if err != nil {
+        // Check if it's an API error
+        if apiErr, ok := err.(*rexec.APIError); ok {
+            fmt.Printf("API Error %d: %s\n", apiErr.StatusCode, apiErr.Message)
+            
+            // Handle specific status codes
+            switch apiErr.StatusCode {
+            case 404:
+                fmt.Println("Container not found")
+            case 401:
+                fmt.Println("Invalid token - please re-authenticate")
+            case 429:
+                fmt.Println("Rate limit exceeded - retry later")
+            default:
+                fmt.Printf("Unexpected error: %v\n", apiErr)
+            }
+        } else {
+            // Network or other error
+            fmt.Printf("Request failed: %v\n", err)
+        }
+        return
+    }
+}
+```
+
+<Note>
+The Go SDK's `APIError` type includes both `StatusCode` and `Message` fields for detailed error inspection.
+</Note>
+
+### JavaScript/TypeScript SDK
+
+The TypeScript SDK provides a custom `RexecError` class for API errors.
+
+```typescript
+import { RexecClient, RexecError } from '@pipeopshq/rexec';
+
+const client = new RexecClient({ baseURL, token });
+
+try {
+  const container = await client.containers.get('invalid-id');
+} catch (error) {
+  if (error instanceof RexecError) {
+    console.error(`API Error ${error.statusCode}: ${error.message}`);
+    
+    // Handle specific errors
+    switch (error.statusCode) {
+      case 404:
+        console.log('Container not found');
+        break;
+      case 401:
+        console.log('Authentication failed - refresh token');
+        break;
+      case 429:
+        console.log('Rate limited - implement exponential backoff');
+        break;
+      default:
+        console.error('Unexpected API error:', error);
+    }
+  } else {
+    // Network error
+    console.error('Network error:', error);
+  }
+}
+```
+
+#### Retry with Exponential Backoff
+
+```typescript
+async function createContainerWithRetry(
+  client: RexecClient,
+  options: CreateContainerRequest,
+  maxRetries = 3
+): Promise<Container> {
+  let lastError: Error;
+  
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await client.containers.create(options);
+    } catch (error) {
+      lastError = error;
+      
+      if (error instanceof RexecError) {
+        // Don't retry client errors (4xx)
+        if (error.statusCode >= 400 && error.statusCode < 500) {
+          throw error;
+        }
+        
+        // Retry server errors (5xx) with exponential backoff
+        if (error.statusCode >= 500) {
+          const delay = Math.pow(2, i) * 1000;
+          console.log(`Retry ${i + 1}/${maxRetries} after ${delay}ms`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+      }
+      
+      throw error;
+    }
+  }
+  
+  throw lastError;
+}
+```
+
+### Python SDK
+
+The Python SDK provides structured exception classes.
+
+```python
+from rexec import RexecClient, RexecAPIError, RexecConnectionError
+import asyncio
+
+async def main():
+    async with RexecClient(base_url, token) as client:
+        try:
+            container = await client.containers.get("invalid-id")
+        except RexecAPIError as e:
+            print(f"API Error {e.status_code}: {e.message}")
+            
+            # Handle specific status codes
+            if e.status_code == 404:
+                print("Container not found")
+            elif e.status_code == 401:
+                print("Authentication failed")
+            elif e.status_code == 429:
+                print("Rate limit exceeded")
+                # Implement retry logic
+                await asyncio.sleep(60)
+        except RexecConnectionError as e:
+            print(f"Connection error: {e}")
+            # Check network connectivity
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+
+asyncio.run(main())
+```
+
+#### Context Manager for Cleanup
+
+```python
+from rexec import RexecClient
+import asyncio
+
+async def safe_container_operation():
+    async with RexecClient(base_url, token) as client:
+        container = None
+        try:
+            # Create container
+            container = await client.containers.create(
+                image="ubuntu:24.04",
+                name="test-container"
+            )
+            
+            # Perform operations
+            await client.containers.start(container.id)
+            result = await client.containers.exec(container.id, "echo hello")
+            print(result.stdout)
+            
+        except Exception as e:
+            print(f"Error during operation: {e}")
+        finally:
+            # Always cleanup
+            if container:
+                try:
+                    await client.containers.delete(container.id)
+                except Exception as e:
+                    print(f"Cleanup failed: {e}")
+```
+
+### Rust SDK
+
+The Rust SDK uses the `Result` type with custom error enums.
+
+```rust
+use rexec::{RexecClient, Error};
+
+#[tokio::main]
+async fn main() {
+    let client = RexecClient::new(base_url, token);
+    
+    match client.containers().get("invalid-id").await {
+        Ok(container) => println!("Found: {}", container.name),
+        Err(Error::Api { status_code, message }) => {
+            eprintln!("API Error {}: {}", status_code, message);
+            
+            match status_code {
+                404 => eprintln!("Container not found"),
+                401 => eprintln!("Authentication failed"),
+                429 => eprintln!("Rate limited"),
+                _ => eprintln!("Unexpected error"),
+            }
+        }
+        Err(Error::Connection(msg)) => {
+            eprintln!("Connection error: {}", msg);
+        }
+        Err(e) => eprintln!("Error: {}", e),
+    }
+}
+```
+
+#### Using the `?` Operator
+
+```rust
+use rexec::{RexecClient, Error, CreateContainerRequest};
+
+async fn create_and_start(client: &RexecClient) -> Result<String, Error> {
+    // Errors propagate automatically with ?
+    let container = client.containers()
+        .create(CreateContainerRequest::new("ubuntu:24.04"))
+        .await?;
+    
+    client.containers().start(&container.id).await?;
+    
+    Ok(container.id)
+}
+
+#[tokio::main]
+async fn main() {
+    let client = RexecClient::new(base_url, token);
+    
+    match create_and_start(&client).await {
+        Ok(id) => println!("Container started: {}", id),
+        Err(e) => eprintln!("Failed: {}", e),
+    }
+}
+```
+
+### Ruby SDK
+
+The Ruby SDK raises exceptions for errors.
+
+```ruby
+require 'rexec'
+
+client = Rexec::Client.new(ENV['REXEC_URL'], ENV['REXEC_TOKEN'])
+
+begin
+  container = client.containers.get("invalid-id")
+rescue Rexec::APIError => e
+  puts "API Error #{e.status_code}: #{e.message}"
+  
+  case e.status_code
+  when 404
+    puts "Container not found"
+  when 401
+    puts "Authentication failed"
+  when 429
+    puts "Rate limited"
+  else
+    puts "Unexpected error"
+  end
+rescue Rexec::ConnectionError => e
+  puts "Connection error: #{e.message}"
+rescue StandardError => e
+  puts "Unexpected error: #{e.message}"
+end
+```
+
+### Java SDK
+
+The Java SDK throws checked exceptions.
+
+```java
+import io.pipeops.rexec.*;
+
+public class ErrorHandlingExample {
+    public static void main(String[] args) {
+        RexecClient client = new RexecClient(baseURL, token);
+        
+        try {
+            Container container = client.containers().get("invalid-id");
+        } catch (RexecAPIException e) {
+            System.err.println("API Error " + e.getStatusCode() + ": " + e.getMessage());
+            
+            switch (e.getStatusCode()) {
+                case 404:
+                    System.err.println("Container not found");
+                    break;
+                case 401:
+                    System.err.println("Authentication failed");
+                    break;
+                case 429:
+                    System.err.println("Rate limited");
+                    break;
+                default:
+                    System.err.println("Unexpected error");
+            }
+        } catch (RexecException e) {
+            System.err.println("Request failed: " + e.getMessage());
+        }
+    }
+}
+```
+
+### C#/.NET SDK
+
+The C# SDK uses exceptions with rich metadata.
+
+```csharp
+using Rexec;
+
+var client = new RexecClient(baseURL, token);
+
+try {
+    var container = await client.Containers.GetAsync("invalid-id");
+}
+catch (RexecException ex) when (ex.IsApiError)
+{
+    Console.WriteLine($"API Error {ex.StatusCode}: {ex.Message}");
+    
+    switch (ex.StatusCode)
+    {
+        case 404:
+            Console.WriteLine("Container not found");
+            break;
+        case 401:
+            Console.WriteLine("Authentication failed");
+            break;
+        case 429:
+            Console.WriteLine("Rate limited");
+            break;
+        default:
+            Console.WriteLine("Unexpected error");
+            break;
+    }
+}
+catch (RexecException ex)
+{
+    Console.WriteLine($"Network error: {ex.Message}");
+}
+```
+
+#### Using Cancellation Tokens
+
+```csharp
+using System.Threading;
+using Rexec;
+
+public async Task<Container> CreateWithTimeoutAsync(string image)
+{
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    
+    try
+    {
+        return await client.Containers.CreateAsync(image, cts.Token);
+    }
+    catch (OperationCanceledException)
+    {
+        Console.WriteLine("Operation timed out after 30 seconds");
+        throw;
+    }
+    catch (RexecException ex)
+    {
+        Console.WriteLine($"Failed to create container: {ex.Message}");
+        throw;
+    }
+}
+```
+
+### PHP SDK
+
+The PHP SDK throws exceptions with type checking.
+
+```php
+<?php
+use Rexec\RexecClient;
+use Rexec\Exceptions\RexecAPIException;
+use Rexec\Exceptions\RexecConnectionException;
+
+$client = new RexecClient(getenv('REXEC_URL'), getenv('REXEC_TOKEN'));
+
+try {
+    $container = $client->containers()->get("invalid-id");
+} catch (RexecAPIException $e) {
+    echo "API Error {$e->getStatusCode()}: {$e->getMessage()}\n";
+    
+    switch ($e->getStatusCode()) {
+        case 404:
+            echo "Container not found\n";
+            break;
+        case 401:
+            echo "Authentication failed\n";
+            break;
+        case 429:
+            echo "Rate limited\n";
+            break;
+        default:
+            echo "Unexpected error\n";
+    }
+} catch (RexecConnectionException $e) {
+    echo "Connection error: {$e->getMessage()}\n";
+} catch (Exception $e) {
+    echo "Unexpected error: {$e->getMessage()}\n";
+}
+```
+
+## Rate Limiting
+
+Rexec enforces rate limits to ensure fair usage:
+
+<Card title="Rate Limits" icon="gauge">
+  - **Container creation**: 10 per minute
+  - **API requests**: 100 per minute
+  - **WebSocket connections**: 5 concurrent per user
+</Card>
+
+### Handling Rate Limits
+
+When you exceed rate limits, the API returns a `429 Too Many Requests` status. Implement exponential backoff:
+
+```typescript
+async function withRateLimit<T>(
+  fn: () => Promise<T>,
+  maxRetries = 5
+): Promise<T> {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (error instanceof RexecError && error.statusCode === 429) {
+        const delay = Math.pow(2, i) * 1000; // Exponential backoff
+        console.log(`Rate limited. Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error('Max retries exceeded');
+}
+
+// Usage
+const container = await withRateLimit(() => 
+  client.containers.create({ image: 'ubuntu:24.04' })
+);
+```
+
+## WebSocket Error Handling
+
+Terminal connections use WebSockets and require special error handling.
+
+<CodeGroup>
+```typescript TypeScript
+const terminal = await client.terminal.connect(containerId);
+
+terminal.onError((error) => {
+  console.error('Terminal error:', error);
+  // Attempt reconnection
+  reconnectTerminal();
+});
+
+terminal.onClose(() => {
+  console.log('Terminal connection closed');
+  // Handle cleanup
+});
+
+terminal.onData((data) => {
+  console.log(data);
+});
+```
+
+```python Python
+async with client.terminal.connect(container_id) as term:
+    try:
+        await term.write(b"echo hello\n")
+        async for data in term:
+            print(data.decode())
+    except asyncio.TimeoutError:
+        print("Terminal read timeout")
+    except Exception as e:
+        print(f"Terminal error: {e}")
+```
+
+```go Go
+term, err := client.Terminal.Connect(ctx, containerID)
+if err != nil {
+    log.Fatalf("Failed to connect: %v", err)
+}
+defer term.Close()
+
+if err := term.Write([]byte("echo hello\n")); err != nil {
+    log.Printf("Write failed: %v", err)
+}
+```
+</CodeGroup>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always Clean Up Resources">
+    Use defer, finally, or context managers to ensure containers are deleted even if errors occur.
+    
+    ```go
+    container, err := client.Containers.Create(ctx, req)
+    if err != nil {
+        return err
+    }
+    defer client.Containers.Delete(ctx, container.ID)
+    ```
+  </Accordion>
+  
+  <Accordion title="Implement Retry Logic">
+    Retry transient errors (5xx, network issues) with exponential backoff. Don't retry client errors (4xx).
+  </Accordion>
+  
+  <Accordion title="Handle Rate Limits Gracefully">
+    Implement exponential backoff for 429 responses. Consider request queuing for high-volume applications.
+  </Accordion>
+  
+  <Accordion title="Log Errors with Context">
+    Include request IDs, container IDs, and timestamps in error logs for debugging.
+    
+    ```typescript
+    console.error('Failed to create container', {
+      image: 'ubuntu:24.04',
+      error: error.message,
+      statusCode: error.statusCode,
+      timestamp: new Date().toISOString(),
+    });
+    ```
+  </Accordion>
+  
+  <Accordion title="Use Timeouts">
+    Set appropriate timeouts for operations to prevent hanging indefinitely.
+    
+    ```go
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Debugging Tips
+
+<Tip>
+**Enable Debug Logging**: Most SDKs support verbose logging to help diagnose issues.
+</Tip>
+
+<CodeGroup>
+```typescript TypeScript
+const client = new RexecClient({
+  baseURL,
+  token,
+  debug: true, // Enable debug logging
+});
+```
+
+```python Python
+import logging
+logging.basicConfig(level=logging.DEBUG)
+```
+
+```go Go
+client.SetHTTPClient(&http.Client{
+    Timeout: 30 * time.Second,
+    Transport: &loggingTransport{},
+})
+```
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Best Practices" icon="star" href="/sdks/best-practices">
+    Learn production-ready patterns
+  </Card>
+  <Card title="Use Cases" icon="lightbulb" href="/sdks/use-cases">
+    Explore real-world examples
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    Complete API documentation
+  </Card>
+  <Card title="Getting Started" icon="rocket" href="/sdks/quickstart">
+    Start building with Rexec
+  </Card>
+</CardGroup>

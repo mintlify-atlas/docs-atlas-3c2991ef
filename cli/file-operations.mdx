@@ -1,0 +1,585 @@
+---
+title: File Operations
+description: Upload, download, and manage files in your Rexec terminals using CLI commands and WebSocket connections
+---
+
+While the Rexec CLI is primarily designed for interactive terminal access, you can perform file operations through terminal connections and scripting.
+
+## Overview
+
+The Rexec CLI focuses on **terminal-based workflows** rather than traditional file transfer commands. This design encourages working directly in your cloud environments rather than shuffling files back and forth.
+
+<Info>
+  For file transfers, consider using standard tools like `scp`, `rsync`, or mounting volumes directly in your terminals.
+</Info>
+
+## Upload Files via Terminal
+
+### Using Copy-Paste
+
+For small text files, you can paste content directly:
+
+<Steps>
+  <Step title="Connect to Terminal">
+    ```bash
+    rexec connect abc123
+    ```
+  </Step>
+  
+  <Step title="Create File with Editor">
+    ```bash
+    nano myfile.txt
+    # or
+    vim myfile.txt
+    ```
+  </Step>
+  
+  <Step title="Paste Content">
+    Paste your content into the editor, save, and exit.
+  </Step>
+</Steps>
+
+### Using Heredoc
+
+Create files with inline content:
+
+```bash
+rexec connect abc123
+
+# Once connected, run:
+cat > myfile.txt <<'EOF'
+Hello from Rexec!
+This is a multi-line file.
+EOF
+```
+
+### Using Base64 Encoding
+
+For binary files or large content:
+
+```bash
+# On your local machine
+base64 local-file.zip | pbcopy  # macOS
+base64 local-file.zip | xclip -selection clipboard  # Linux
+
+# In Rexec terminal
+rexec connect abc123
+
+# Paste and decode
+cat > file.zip.b64
+# Paste base64 content here, then Ctrl+D
+
+base64 -d file.zip.b64 > file.zip
+rm file.zip.b64
+```
+
+## Download Files from Terminal
+
+### View File Content
+
+Display file content in your terminal:
+
+```bash
+rexec connect abc123
+
+# View text files
+cat myfile.txt
+less largefile.log
+
+# View with syntax highlighting
+bat myfile.py  # if bat is installed
+```
+
+### Copy Content Manually
+
+For small files, select and copy the terminal output:
+
+```bash
+rexec connect abc123
+
+# Display file
+cat myfile.txt
+
+# Select the output with your mouse and copy
+```
+
+### Using Base64 Encoding
+
+For binary files:
+
+```bash
+rexec connect abc123
+
+# Encode file
+base64 file.zip
+
+# Copy the output, then on your local machine:
+echo "<paste-base64-here>" | base64 -d > downloaded-file.zip
+```
+
+## File Transfer Alternatives
+
+For regular file transfers, consider these approaches:
+
+### 1. Cloud Storage Integration
+
+Use cloud storage from within terminals:
+
+<CodeGroup>
+```bash AWS S3
+rexec connect abc123
+
+# Install AWS CLI in terminal
+apt-get update && apt-get install -y awscli
+
+# Upload
+aws s3 cp myfile.txt s3://my-bucket/
+
+# Download
+aws s3 cp s3://my-bucket/myfile.txt .
+```
+
+```bash Google Cloud Storage
+rexec connect abc123
+
+# Install gsutil
+curl https://sdk.cloud.google.com | bash
+
+# Upload
+gsutil cp myfile.txt gs://my-bucket/
+
+# Download
+gsutil cp gs://my-bucket/myfile.txt .
+```
+
+```bash Azure Blob Storage
+rexec connect abc123
+
+# Install Azure CLI
+curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+
+# Upload
+az storage blob upload --account-name myaccount --container-name mycontainer --file myfile.txt --name myfile.txt
+```
+</CodeGroup>
+
+### 2. HTTP File Sharing
+
+Host files temporarily with HTTP servers:
+
+<CodeGroup>
+```bash Python HTTP Server
+rexec connect abc123
+
+# Serve files on port 8000
+cd /path/to/files
+python3 -m http.server 8000
+
+# Download from another terminal/machine
+wget http://<terminal-ip>:8000/myfile.txt
+```
+
+```bash Upload via curl
+rexec connect abc123
+
+# Receive files
+nc -l -p 9999 > received-file.txt
+
+# From local machine
+cat myfile.txt | nc <terminal-ip> 9999
+```
+
+```bash File.io Upload
+rexec connect abc123
+
+# Upload to file.io (temporary sharing)
+curl -F "file=@myfile.txt" https://file.io
+
+# Returns a download link valid for 14 days
+```
+</CodeGroup>
+
+### 3. Git Integration
+
+Use Git for source code and configuration files:
+
+```bash
+rexec connect abc123
+
+# Clone repository
+git clone https://github.com/user/repo.git
+cd repo
+
+# Make changes
+vim config.yaml
+
+# Commit and push
+git add config.yaml
+git commit -m "Update config"
+git push origin main
+```
+
+### 4. Volume Mounts (Future Feature)
+
+<Note>
+  Volume mounting is planned for a future release. This will allow direct filesystem access between your local machine and Rexec terminals.
+  
+  Planned syntax:
+  ```bash
+  # Create terminal with volume
+  rexec create --name mydev --volume /local/path:/remote/path
+  
+  # Mount volume to existing terminal
+  rexec volume mount abc123 /local/path:/remote/path
+  ```
+</Note>
+
+## Scripting File Operations
+
+Automate file operations using the CLI programmatically:
+
+### Execute Commands via WebSocket
+
+The CLI connects via WebSocket for terminal sessions. You can script commands:
+
+```bash
+#!/bin/bash
+
+TERMINAL_ID="abc123"
+FILE_CONTENT="Hello from script!"
+
+# Create a script that:
+# 1. Connects to terminal
+# 2. Runs commands
+# 3. Disconnects
+
+(echo "cat > remote-file.txt <<'EOF'"
+ echo "$FILE_CONTENT"
+ echo "EOF"
+ echo "cat remote-file.txt"  # Verify
+ sleep 2) | rexec connect "$TERMINAL_ID"
+```
+
+### Using Snippets for File Operations
+
+Create reusable snippets for common file operations:
+
+```bash
+# Save a snippet for uploading to S3
+rexec snippets create \
+  --name upload-s3 \
+  --command "aws s3 cp /tmp/data.csv s3://my-bucket/data/"
+
+# Run the snippet
+rexec run upload-s3 --terminal abc123
+```
+
+## File Management Within Terminals
+
+Once connected to a terminal, use standard Linux commands:
+
+### Basic Operations
+
+<CodeGroup>
+```bash List Files
+rexec connect abc123
+
+# List files
+ls -lah
+
+# Tree view (if installed)
+tree -L 2
+
+# Find files
+find . -name "*.txt"
+```
+
+```bash Copy/Move
+rexec connect abc123
+
+# Copy files
+cp source.txt destination.txt
+cp -r /source/dir /dest/dir
+
+# Move/rename
+mv oldname.txt newname.txt
+mv file.txt /new/location/
+```
+
+```bash Delete Files
+rexec connect abc123
+
+# Delete file
+rm file.txt
+
+# Delete directory
+rm -rf directory/
+
+# Safe delete (interactive)
+rm -i file.txt
+```
+
+```bash Compress/Extract
+rexec connect abc123
+
+# Create tar archive
+tar -czf archive.tar.gz /path/to/files
+
+# Extract archive
+tar -xzf archive.tar.gz
+
+# Create zip
+zip -r archive.zip /path/to/files
+
+# Extract zip
+unzip archive.zip
+```
+</CodeGroup>
+
+### File Permissions
+
+```bash
+rexec connect abc123
+
+# Change permissions
+chmod 755 script.sh
+chmod 644 config.yaml
+
+# Change ownership
+chown user:group file.txt
+chown -R user:group directory/
+
+# Make executable
+chmod +x script.sh
+```
+
+### Search File Content
+
+```bash
+rexec connect abc123
+
+# Search in files
+grep "error" logfile.txt
+grep -r "TODO" .
+
+# Search with context
+grep -C 3 "error" logfile.txt
+
+# Case insensitive
+grep -i "error" logfile.txt
+```
+
+## Working with Large Files
+
+### Split and Transfer
+
+For large files, split them before transfer:
+
+```bash
+# Local machine - split file
+split -b 10M largefile.zip part_
+
+# Transfer parts via copy-paste or base64
+# ...
+
+# In terminal - reassemble
+rexec connect abc123
+cat part_* > largefile.zip
+```
+
+### Streaming with Pipes
+
+Stream data through the terminal:
+
+```bash
+rexec connect abc123
+
+# Stream compressed data
+tar -czf - /large/directory | base64
+
+# On receiving end
+base64 -d | tar -xzf -
+```
+
+## Persistent Storage
+
+Terminals can have persistent storage:
+
+<Warning>
+  **Important:** Terminal storage is ephemeral by default. When you delete a terminal, all data is lost unless you've configured persistent volumes.
+</Warning>
+
+### Using Terminal Storage
+
+```bash
+rexec connect abc123
+
+# Check available disk space
+df -h
+
+# Your home directory is typically persistent
+cd ~
+mkdir projects
+cd projects
+
+# Files here persist across terminal stops/starts
+echo "persistent data" > important.txt
+```
+
+### Backup Important Data
+
+Regularly backup important files:
+
+```bash
+rexec connect abc123
+
+# Backup to cloud storage
+tar -czf backup-$(date +%Y%m%d).tar.gz ~/projects
+aws s3 cp backup-*.tar.gz s3://my-backups/
+
+# Or commit to Git
+cd ~/projects
+git add .
+git commit -m "Backup"
+git push
+```
+
+## File Sync Strategies
+
+### Development Workflow
+
+Recommended approach for active development:
+
+<Steps>
+  <Step title="Initialize Git Repository">
+    ```bash
+    # On local machine
+    cd my-project
+    git init
+    git add .
+    git commit -m "Initial commit"
+    git remote add origin <your-repo-url>
+    git push -u origin main
+    ```
+  </Step>
+  
+  <Step title="Clone in Terminal">
+    ```bash
+    rexec connect abc123
+    
+    git clone <your-repo-url>
+    cd my-project
+    ```
+  </Step>
+  
+  <Step title="Develop and Sync">
+    ```bash
+    # Make changes in terminal
+    vim src/app.py
+    
+    # Commit and push
+    git add src/app.py
+    git commit -m "Update app"
+    git push
+    
+    # Pull changes from local
+    git pull
+    ```
+  </Step>
+</Steps>
+
+### Configuration Management
+
+For managing configuration files:
+
+```bash
+# Use a dotfiles repository
+rexec connect abc123
+
+git clone https://github.com/user/dotfiles.git ~/.dotfiles
+cd ~/.dotfiles
+./install.sh
+
+# Symlink configs
+ln -s ~/.dotfiles/.bashrc ~/.bashrc
+ln -s ~/.dotfiles/.vimrc ~/.vimrc
+```
+
+## Tips & Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Cloud Storage" icon="cloud">
+    Store files in S3, GCS, or Azure Blob for easy access across terminals
+  </Card>
+  
+  <Card title="Git for Source Code" icon="code-branch">
+    Always use version control for code and configuration files
+  </Card>
+  
+  <Card title="Backup Regularly" icon="floppy-disk">
+    Terminals are ephemeral - backup important data frequently
+  </Card>
+  
+  <Card title="Use Snippets" icon="bolt">
+    Create snippets for common file operations you repeat often
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Lost files after terminal restart">
+    **Cause:** Files stored in `/tmp` or non-persistent directories are lost on restart.
+    
+    **Solution:**
+    - Store important files in home directory (`~`)
+    - Use cloud storage for critical data
+    - Configure persistent volumes (when available)
+  </Accordion>
+  
+  <Accordion title="Cannot write to directory">
+    **Cause:** Permission issues
+    
+    **Solution:**
+    ```bash
+    # Check permissions
+    ls -la /path/to/directory
+    
+    # Change ownership
+    sudo chown -R $USER /path/to/directory
+    
+    # Use your home directory
+    cd ~ && mkdir my-files
+    ```
+  </Accordion>
+  
+  <Accordion title="Disk space full">
+    **Cause:** Terminal has limited disk space
+    
+    **Solution:**
+    ```bash
+    # Check disk usage
+    df -h
+    du -sh * | sort -h
+    
+    # Clean up
+    rm -rf /tmp/*
+    apt-get clean  # Clear package cache
+    docker system prune -a  # Clean Docker (if installed)
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Snippets" icon="code" href="/cli/snippets">
+    Save common file operations as snippets
+  </Card>
+  <Card title="Agent Mode" icon="server" href="/cli/agent-mode">
+    Connect your own machines for direct file system access
+  </Card>
+  <Card title="API Reference" icon="book" href="/api/files">
+    Programmatic file access via REST API
+  </Card>
+</CardGroup>

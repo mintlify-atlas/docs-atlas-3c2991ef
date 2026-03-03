@@ -1,0 +1,590 @@
+---
+title: 'Standalone Deployment'
+description: 'Manual installation guide for deploying Rexec on bare metal or VMs'
+---
+
+## Overview
+
+This guide covers manual installation of Rexec, ideal for:
+
+- Production deployments on dedicated servers
+- Custom infrastructure requirements
+- Development environments
+- Full control over the installation
+
+## Prerequisites
+
+<Steps>
+  <Step title="System Requirements">
+    - **OS**: Linux (Ubuntu 22.04+, Debian 11+, RHEL 8+, or similar)
+    - **RAM**: 2GB minimum (4GB recommended)
+    - **Disk**: 10GB free space
+    - **CPU**: 2 cores minimum
+  </Step>
+  
+  <Step title="Install Go">
+    Rexec requires Go 1.22 or later:
+    
+    ```bash
+    # Download and install Go 1.22
+    wget https://go.dev/dl/go1.22.linux-amd64.tar.gz
+    sudo rm -rf /usr/local/go
+    sudo tar -C /usr/local -xzf go1.22.linux-amd64.tar.gz
+    export PATH=$PATH:/usr/local/go/bin
+    
+    # Verify installation
+    go version
+    ```
+  </Step>
+  
+  <Step title="Install Docker Engine">
+    Required for creating container-based terminals:
+    
+    ```bash
+    curl -fsSL https://get.docker.com | sudo sh
+    sudo usermod -aG docker $USER
+    ```
+    
+    Log out and back in for group changes to take effect.
+  </Step>
+  
+  <Step title="Install Node.js (for frontend)">
+    Required to build the web UI:
+    
+    ```bash
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+    node --version
+    npm --version
+    ```
+  </Step>
+  
+  <Step title="Install PostgreSQL">
+    ```bash
+    # Ubuntu/Debian
+    sudo apt update
+    sudo apt install postgresql postgresql-contrib
+    
+    # Start PostgreSQL
+    sudo systemctl start postgresql
+    sudo systemctl enable postgresql
+    ```
+  </Step>
+  
+  <Step title="Install Redis (recommended)">
+    Required for session management and scaling:
+    
+    ```bash
+    sudo apt install redis-server
+    sudo systemctl start redis-server
+    sudo systemctl enable redis-server
+    ```
+  </Step>
+</Steps>
+
+## Installation Steps
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/PipeOpsHQ/rexec.git
+    cd rexec
+    ```
+  </Step>
+  
+  <Step title="Configure the database">
+    Create the PostgreSQL database and user:
+    
+    ```bash
+    sudo -u postgres psql
+    ```
+    
+    ```sql
+    CREATE DATABASE rexec;
+    CREATE USER rexec WITH PASSWORD 'your-secure-password';
+    GRANT ALL PRIVILEGES ON DATABASE rexec TO rexec;
+    \q
+    ```
+  </Step>
+  
+  <Step title="Configure environment variables">
+    Copy the example configuration file:
+    
+    ```bash
+    cp .env.example .env
+    ```
+    
+    Edit `.env` with your settings:
+    
+    ```bash .env
+    # Server
+    PORT=8080
+    GIN_MODE=release
+    BASE_URL=http://localhost:8080
+    
+    # Security
+    JWT_SECRET=$(openssl rand -base64 32)
+    REXEC_ENCRYPTION_KEY=$(openssl rand -base64 32 | head -c 32)
+    ALLOWED_ORIGINS=http://localhost:8080
+    
+    # PostgreSQL Database
+    DATABASE_URL=postgres://rexec:your-secure-password@localhost:5432/rexec?sslmode=disable
+    
+    # Redis
+    REDIS_URL=redis://localhost:6379
+    
+    # Docker
+    DOCKER_HOST=unix:///var/run/docker.sock
+    VOLUME_PATH=/var/lib/rexec/volumes
+    CONTAINER_NETWORK=rexec-network
+    CONTAINER_IDLE_TIMEOUT=3600
+    
+    # Resource Limits
+    DEFAULT_MEMORY_MB=512
+    DEFAULT_CPU_SHARES=512
+    DEFAULT_DISK_MB=1024
+    
+    # Storage
+    RECORDINGS_PATH=/var/lib/rexec/recordings
+    SCRIPTS_DIR=./scripts
+    DOWNLOADS_DIR=./downloads
+    
+    # Logging
+    LOG_LEVEL=info
+    ```
+    
+    <Note>
+      The `REXEC_ENCRYPTION_KEY` must be exactly 16, 24, or 32 characters (bytes) for AES encryption.
+    </Note>
+  </Step>
+  
+  <Step title="Setup development environment">
+    Run the setup script to initialize directories and dependencies:
+    
+    ```bash
+    make setup
+    ```
+    
+    This will:
+    - Install Go dependencies
+    - Create `/var/lib/rexec/volumes` directory
+    - Pull base Docker images (Ubuntu, Debian)
+    - Set proper permissions
+  </Step>
+  
+  <Step title="Build the frontend">
+    Build the Svelte web UI:
+    
+    ```bash
+    cd frontend
+    npm install
+    npm run build
+    cd ..
+    ```
+    
+    This creates static files in the `web/` directory that will be served by the API.
+  </Step>
+  
+  <Step title="Build the backend">
+    Compile the Go binary:
+    
+    ```bash
+    make build
+    ```
+    
+    Or build everything (UI + backend + CLI tools):
+    
+    ```bash
+    make build-all
+    ```
+    
+    The binary will be created at `bin/rexec`.
+  </Step>
+  
+  <Step title="Run database migrations">
+    Initialize the database schema:
+    
+    ```bash
+    ./bin/rexec migrate
+    ```
+  </Step>
+  
+  <Step title="Create Docker network">
+    Create the isolated network for containers:
+    
+    ```bash
+    docker network create rexec-network
+    ```
+  </Step>
+  
+  <Step title="Start the server">
+    ```bash
+    ./bin/rexec server
+    ```
+    
+    The server will start on port 8080 (or the port specified in `.env`).
+  </Step>
+  
+  <Step title="Access the dashboard">
+    Open your browser to:
+    
+    ```
+    http://localhost:8080
+    ```
+    
+    Create your admin account on first launch.
+  </Step>
+</Steps>
+
+## Running as a System Service
+
+For production deployments, run Rexec as a systemd service:
+
+<Steps>
+  <Step title="Create service user">
+    ```bash
+    sudo useradd -r -s /bin/false rexec
+    sudo usermod -aG docker rexec
+    ```
+  </Step>
+  
+  <Step title="Set up directories">
+    ```bash
+    sudo mkdir -p /var/lib/rexec/volumes
+    sudo mkdir -p /var/lib/rexec/recordings
+    sudo mkdir -p /etc/rexec
+    sudo chown -R rexec:rexec /var/lib/rexec
+    ```
+  </Step>
+  
+  <Step title="Copy files">
+    ```bash
+    # Copy binary
+    sudo cp bin/rexec /usr/local/bin/rexec
+    sudo chmod +x /usr/local/bin/rexec
+    
+    # Copy web files
+    sudo cp -r web /var/lib/rexec/
+    sudo chown -R rexec:rexec /var/lib/rexec/web
+    
+    # Copy configuration
+    sudo cp .env /etc/rexec/.env
+    sudo chown rexec:rexec /etc/rexec/.env
+    sudo chmod 600 /etc/rexec/.env
+    ```
+  </Step>
+  
+  <Step title="Create systemd service">
+    Create `/etc/systemd/system/rexec.service`:
+    
+    ```ini /etc/systemd/system/rexec.service
+    [Unit]
+    Description=Rexec Terminal Service
+    After=network.target postgresql.service redis.service docker.service
+    Requires=postgresql.service redis.service docker.service
+    
+    [Service]
+    Type=simple
+    User=rexec
+    Group=rexec
+    WorkingDirectory=/var/lib/rexec
+    EnvironmentFile=/etc/rexec/.env
+    ExecStart=/usr/local/bin/rexec server
+    Restart=always
+    RestartSec=10
+    StandardOutput=journal
+    StandardError=journal
+    SyslogIdentifier=rexec
+    
+    # Security hardening
+    NoNewPrivileges=true
+    PrivateTmp=true
+    ProtectSystem=strict
+    ReadWritePaths=/var/lib/rexec
+    
+    [Install]
+    WantedBy=multi-user.target
+    ```
+  </Step>
+  
+  <Step title="Enable and start service">
+    ```bash
+    sudo systemctl daemon-reload
+    sudo systemctl enable rexec
+    sudo systemctl start rexec
+    ```
+  </Step>
+  
+  <Step title="Verify status">
+    ```bash
+    sudo systemctl status rexec
+    sudo journalctl -u rexec -f
+    ```
+  </Step>
+</Steps>
+
+## Development Workflow
+
+For development, use the hot-reload setup:
+
+```bash
+# Terminal 1: Run backend with hot reload (requires air)
+make dev
+
+# Terminal 2: Run frontend dev server
+cd frontend
+npm run dev
+```
+
+The frontend will be available at `http://localhost:5173` with Vite hot module replacement.
+
+## Building CLI Tools
+
+Rexec includes several CLI tools:
+
+```bash
+# Build all CLI tools for your platform
+make cli-all
+
+# Outputs:
+# - bin/rexec-cli    (CLI client)
+# - bin/rexec-tui    (Terminal UI dashboard)
+# - bin/rexec-agent  (Remote agent)
+# - bin/rexec-ssh    (SSH gateway)
+
+# Build for all platforms (linux/darwin, amd64/arm64)
+make dist
+```
+
+Built binaries will be in the `downloads/` directory.
+
+## Remote Docker Configuration
+
+To connect to a remote Docker daemon instead of using the local Docker socket:
+
+<Steps>
+  <Step title="Generate TLS certificates on Docker host">
+    Run the TLS setup script on your Docker host VM:
+    
+    ```bash
+    ./scripts/setup-docker-tls.sh YOUR_VM_PUBLIC_IP
+    ```
+    
+    This generates:
+    - `ca.pem` (CA certificate)
+    - `cert.pem` (client certificate)
+    - `key.pem` (client key)
+  </Step>
+  
+  <Step title="Configure Docker daemon">
+    On the Docker host, edit `/etc/docker/daemon.json`:
+    
+    ```json
+    {
+      "hosts": ["unix:///var/run/docker.sock", "tcp://0.0.0.0:2376"],
+      "tls": true,
+      "tlscacert": "/etc/docker/certs/ca.pem",
+      "tlscert": "/etc/docker/certs/server-cert.pem",
+      "tlskey": "/etc/docker/certs/server-key.pem",
+      "tlsverify": true
+    }
+    ```
+    
+    Restart Docker:
+    ```bash
+    sudo systemctl daemon-reload
+    sudo systemctl restart docker
+    ```
+  </Step>
+  
+  <Step title="Update Rexec configuration">
+    In your `.env` file:
+    
+    ```bash
+    DOCKER_HOST=tcp://your-docker-host:2376
+    DOCKER_TLS_VERIFY=1
+    DOCKER_CA_CERT=$(cat ca.pem)
+    DOCKER_CLIENT_CERT=$(cat cert.pem)
+    DOCKER_CLIENT_KEY=$(cat key.pem)
+    ```
+  </Step>
+</Steps>
+
+## Health Checks
+
+Verify your installation:
+
+```bash
+# API health
+curl http://localhost:8080/health
+
+# Database connection
+curl http://localhost:8080/api/health/database
+
+# Docker connectivity
+curl http://localhost:8080/api/health/docker
+```
+
+Expected response:
+```json
+{
+  "status": "ok",
+  "database": "connected",
+  "docker": "connected",
+  "version": "v1.0.0"
+}
+```
+
+## Makefile Commands
+
+The Makefile provides useful commands for development and deployment:
+
+<CodeGroup>
+
+```bash Build & Run
+# Build everything (UI + backend + CLI tools)
+make build-all
+
+# Build only the backend
+make build
+
+# Build only the frontend
+make ui
+
+# Run the server
+make run
+```
+
+```bash Development
+# Setup development environment
+make setup
+
+# Run with hot reload (requires air)
+make dev
+
+# Run frontend dev server
+make ui-dev
+
+# Build embeddable terminal widget
+make embed
+```
+
+```bash Testing
+# Run tests
+make test
+
+# Run tests with coverage
+make test-coverage
+
+# Lint code
+make lint
+
+# Format code
+make fmt
+```
+
+```bash CLI Tools
+# Build CLI tools (local platform)
+make cli-all
+
+# Build agent for all platforms
+make agent-all
+
+# Build CLI for all platforms
+make cli-all-platforms
+
+# Build all distribution binaries
+make dist
+```
+
+```bash Docker Images
+# Build base container images (Ubuntu, Debian, Arch)
+make images
+
+# Pull base images
+make pull-images
+```
+
+```bash Cleanup
+# Clean build artifacts
+make clean
+
+# Download/update dependencies
+make deps
+```
+
+</CodeGroup>
+
+## Troubleshooting
+
+### Port Already in Use
+
+If port 8080 is taken, change it in `.env`:
+```bash
+PORT=8081
+```
+
+### Database Connection Failed
+
+Verify PostgreSQL is running:
+```bash
+sudo systemctl status postgresql
+```
+
+Test connection:
+```bash
+psql -U rexec -d rexec -h localhost
+```
+
+### Docker Permission Denied
+
+Add your user to the docker group:
+```bash
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### Binary Not Found
+
+Ensure the binary is in your PATH or use the full path:
+```bash
+/usr/local/bin/rexec server
+```
+
+### Build Fails
+
+Clear Go module cache:
+```bash
+go clean -modcache
+make deps
+make build
+```
+
+## Security Considerations
+
+<Warning>
+  Always change default credentials and secrets in production.
+</Warning>
+
+- Generate strong secrets:
+  ```bash
+  openssl rand -base64 32
+  ```
+
+- Use HTTPS in production (reverse proxy with nginx/caddy)
+- Restrict `ALLOWED_ORIGINS` to your domain
+- Keep PostgreSQL and Redis on private networks
+- Use firewall rules to restrict access
+- Enable audit logging
+- Regularly update dependencies
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/deployment/configuration">
+    Explore all environment variables and configuration options
+  </Card>
+  <Card title="Docker Compose" icon="docker" href="/deployment/docker-compose">
+    Try the simpler Docker Compose deployment method
+  </Card>
+</CardGroup>

@@ -1,0 +1,680 @@
+---
+title: SSH Gateway (rexec-ssh)
+description: Access Rexec terminals through SSH with zero-install, terminal.shop-style authentication and TUI dashboard
+---
+
+The **rexec-ssh** gateway enables SSH access to Rexec, allowing users to connect with a simple `ssh` command—no CLI installation required. Inspired by [terminal.shop](https://terminal.shop), it provides instant access to the Rexec TUI dashboard and terminal environments through standard SSH.
+
+## Overview
+
+The SSH gateway provides:
+
+- **Zero-install access** - Just `ssh rexec.io` from any terminal
+- **Universal compatibility** - Works on Linux, macOS, Windows (WSL), mobile
+- **Guest sessions** - Immediate access without pre-registration
+- **Account linking** - Optional authentication for persistent data
+- **TUI dashboard** - Full Bubble Tea interface over SSH
+- **Terminal bridging** - Direct container/agent access
+
+<Note>
+  The SSH gateway is built with [Wish](https://github.com/charmbracelet/wish), Charm's SSH server library, providing enterprise-grade security and session management.
+</Note>
+
+## Architecture
+
+```
+┌─────────────────┐         ┌─────────────────────────────────────────┐
+│   User's Term   │   SSH   │              SSH Gateway                │
+│                 │ ──────► │  ┌─────────────────────────────────┐    │
+│  ssh rexec.io   │         │  │  wish Server (port 22/2222)     │    │
+└─────────────────┘         │  │                                 │    │
+                            │  │  ┌───────────────────────────┐  │    │
+                            │  │  │  Bubble Tea TUI Session   │  │    │
+                            │  │  │  - Dashboard              │  │    │
+                            │  │  │  - Terminal list          │  │    │
+                            │  │  │  - Snippets               │  │    │
+                            │  │  │  - Agent management       │  │    │
+                            │  │  └───────────────────────────┘  │    │
+                            │  └─────────────────────────────────┘    │
+                            │                    │                    │
+                            │                    ▼                    │
+                            │  ┌─────────────────────────────────┐    │
+                            │  │  Rexec API (internal)           │    │
+                            │  │  - Auth, Containers, Agents     │    │
+                            │  └─────────────────────────────────┘    │
+                            │                    │                    │
+                            │                    ▼                    │
+                            │  ┌─────────────────────────────────┐    │
+                            │  │  Container/Agent WebSocket      │    │
+                            │  │  Terminal Bridge                │    │
+                            │  └─────────────────────────────────┘    │
+                            └─────────────────────────────────────────┘
+```
+
+## Installation
+
+<Steps>
+  <Step title="Build from Source">
+    Clone the repository and build the gateway:
+
+    ```bash
+    git clone https://github.com/PipeOpsHQ/rexec.git
+    cd rexec
+    make ssh-gateway
+    ```
+
+    This creates `bin/rexec-ssh`.
+  </Step>
+
+  <Step title="Generate Host Key">
+    Create an SSH host key for the server:
+
+    ```bash
+    ssh-keygen -t ed25519 -f ~/.ssh/rexec_host_key -N ""
+    ```
+  </Step>
+
+  <Step title="Start the Gateway">
+    Run the SSH gateway:
+
+    ```bash
+    ./bin/rexec-ssh --port 2222 --host-key ~/.ssh/rexec_host_key
+    ```
+  </Step>
+
+  <Step title="Connect">
+    From any client:
+
+    ```bash
+    ssh -p 2222 localhost
+    ```
+  </Step>
+</Steps>
+
+### Build for All Platforms
+
+Create distribution binaries:
+
+```bash
+make ssh-gateway-all
+```
+
+Output in `downloads/`:
+- `rexec-ssh-linux-amd64`
+- `rexec-ssh-linux-arm64`
+- `rexec-ssh-darwin-amd64`
+- `rexec-ssh-darwin-arm64`
+
+## Configuration
+
+### Command-Line Flags
+
+| Flag | Description | Default |
+|------|-------------|----------|
+| `--port` | SSH server port | `2222` |
+| `--host-key` | Path to SSH host key | `.ssh/rexec_host_key` |
+| `--api-url` | Rexec API URL | `http://localhost:8080` |
+
+### Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|----------|
+| `SSH_GATEWAY_PORT` | SSH listen port | `2222` |
+| `SSH_GATEWAY_HOST_KEY` | Host key path | `/etc/rexec/ssh_host_key` |
+| `SSH_GATEWAY_API_URL` | Rexec API URL | `http://localhost:8080` |
+| `SSH_GATEWAY_MAX_CONNECTIONS` | Connection limit | `1000` |
+| `SSH_GATEWAY_SESSION_TIMEOUT` | Max session duration | `24h` |
+| `SSH_GATEWAY_IDLE_TIMEOUT` | Idle timeout | `30m` |
+
+<CodeGroup>
+```bash Basic Usage
+rexec-ssh --port 2222 --api-url http://localhost:8080
+```
+
+```bash Production Settings
+export SSH_GATEWAY_PORT=22
+export SSH_GATEWAY_HOST_KEY=/etc/rexec/ssh_host_key
+export SSH_GATEWAY_API_URL=http://rexec-api:8080
+export SSH_GATEWAY_MAX_CONNECTIONS=5000
+
+rexec-ssh
+```
+
+```bash Environment File
+# /etc/rexec/gateway.env
+SSH_GATEWAY_PORT=2222
+SSH_GATEWAY_HOST_KEY=/etc/rexec/ssh_host_key
+SSH_GATEWAY_API_URL=http://localhost:8080
+SSH_GATEWAY_SESSION_TIMEOUT=12h
+SSH_GATEWAY_IDLE_TIMEOUT=15m
+
+# Load and run
+source /etc/rexec/gateway.env
+rexec-ssh
+```
+</CodeGroup>
+
+## Authentication Methods
+
+### Zero-Config Access (Public Key)
+
+Like terminal.shop, the gateway **accepts ANY valid SSH public key** without pre-registration:
+
+```bash
+# Just connect - no setup required!
+ssh rexec.io
+
+# Server accepts your existing SSH key automatically
+# Your key fingerprint becomes your identity
+```
+
+**How it works**:
+
+1. User runs `ssh rexec.io`
+2. SSH client offers user's default public key (e.g., `~/.ssh/id_ed25519.pub`)
+3. Server **accepts any valid key**
+4. Server extracts fingerprint (e.g., `SHA256:abc123...`)
+5. Fingerprint lookup:
+   - **Known**: Load existing user session
+   - **Unknown**: Create guest session
+
+<Info>
+  First-time users get a guest session immediately. Return visits with the same key resume their session.
+</Info>
+
+### Guest Sessions
+
+Unlinked SSH keys get guest access with limited features:
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│  ██████╗ ███████╗██╗  ██╗███████╗ ██████╗                         │
+│  ██╔══██╗██╔════╝╚██╗██╔╝██╔════╝██╔════╝                         │
+│  ██████╔╝█████╗   ╚███╔╝ █████╗  ██║                              │
+│  ██╔══██╗██╔══╝   ██╔██╗ ██╔══╝  ██║                              │
+│  ██║  ██║███████╗██╔╝ ██╗███████╗╚██████╗                         │
+│  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝ ╚═════╝  Terminal Cloud         │
+├────────────────────────────────────────────────────────────────────┤
+│  👋 Welcome, Guest!                    SSH Key: ed25519 SHA256:xY │
+│  ┌────────────────────────────────────────────────────────────┐   │
+│  │ 🔗 Link your account for full access: terminals, agents,   │   │
+│  │    snippets, and more. Press [L] to link now.              │   │
+│  └────────────────────────────────────────────────────────────┘   │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│  [1] 🎮 Try Demo Terminal   Launch a temporary sandbox            │
+│  [2] 👀 Explore Features    See what Rexec can do                 │
+│  [L] 🔗 Link Account        Connect to your Rexec account         │
+│  [S] 📝 Sign Up             Create a new account                  │
+│  [q] 🚪 Quit                Exit SSH session                      │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+Guest limitations:
+- 1 demo terminal max
+- No persistent data
+- No agents
+- Limited snippets
+
+### Account Linking
+
+Link your SSH key to a Rexec account for full access:
+
+<Tabs>
+  <Tab title="In TUI">
+    1. Connect via SSH: `ssh rexec.io`
+    2. Press **L** for "Link Account"
+    3. Enter your email/token
+    4. Verify via email link
+    5. Reconnect - now authenticated!
+  </Tab>
+
+  <Tab title="Via CLI">
+    ```bash
+    # Get your SSH key fingerprint
+    ssh-keygen -lf ~/.ssh/id_ed25519.pub
+    
+    # Link via CLI
+    rexec ssh-key link --fingerprint "SHA256:abc123..."
+    ```
+  </Tab>
+
+  <Tab title="Via Web UI">
+    1. Go to Settings → SSH Keys
+    2. Add your fingerprint
+    3. Next SSH connection will be linked
+  </Tab>
+</Tabs>
+
+### Token-Based Authentication
+
+For environments without SSH keys:
+
+```bash
+# Username with password prompt (accepts API token)
+ssh myusername@rexec.io
+# Password: <paste-your-token>
+
+# Special token user
+ssh token@rexec.io
+# Password: <paste-your-token>
+```
+
+### Direct Terminal Access
+
+Jump straight to a specific terminal:
+
+```bash
+# Connect to specific terminal
+ssh terminal-abc123@rexec.io
+
+# Or agent
+ssh agent-myserver@rexec.io
+```
+
+<Warning>
+  Direct access requires your SSH key to be linked to an account with permissions for that terminal.
+</Warning>
+
+## Usage Examples
+
+### First-Time User Flow
+
+```bash
+$ ssh rexec.io
+# 1. SSH handshake - client offers ~/.ssh/id_ed25519.pub
+# 2. Server ACCEPTS the key (any valid key works)
+# 3. Server extracts fingerprint: SHA256:xYz789...
+# 4. Fingerprint lookup → not found → new guest session
+# 5. Create ssh_fingerprints record
+# 6. Initialize TUI with guest dashboard
+# 7. User sees: "Welcome! Link your account for full access"
+# 8. Guest can explore demo, create 1 trial terminal
+```
+
+### Returning User (Linked)
+
+```bash
+$ ssh rexec.io
+# 1. SSH handshake - server accepts key
+# 2. Fingerprint lookup → found → user_id = abc123
+# 3. Load user's session, permissions, preferences
+# 4. TUI shows personalized dashboard with all terminals/agents
+# 5. User selects a terminal...
+# 6. TUI connects to container WebSocket
+# 7. PTY bridge established
+# 8. User is now in container shell
+
+# Press Ctrl+] to return to dashboard
+# Press 'q' to disconnect
+```
+
+### Quick Terminal Access
+
+```bash
+# Launch SSH, press '1' to connect to first terminal
+ssh rexec.io
+
+# Or jump directly
+ssh terminal-abc123@rexec.io
+```
+
+## Database Schema
+
+The gateway uses PostgreSQL for session management:
+
+```sql
+-- SSH fingerprints - can exist without a linked user (guest sessions)
+CREATE TABLE ssh_fingerprints (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    fingerprint TEXT NOT NULL UNIQUE,          -- SHA256:abc123...
+    user_id UUID REFERENCES users(id),         -- NULL for unlinked guests
+    public_key TEXT,                           -- Optional, for display
+    key_type TEXT,                             -- ed25519, rsa, etc.
+    first_seen_at TIMESTAMPTZ DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ DEFAULT NOW(),
+    last_ip TEXT,
+    session_count INT DEFAULT 0
+);
+
+-- Guest session data (for unlinked fingerprints)
+CREATE TABLE ssh_guest_sessions (
+    fingerprint_id UUID REFERENCES ssh_fingerprints(id),
+    preferences JSONB DEFAULT '{}',
+    demo_terminals_created INT DEFAULT 0,
+    PRIMARY KEY (fingerprint_id)
+);
+```
+
+## API Endpoints
+
+The gateway communicates with the Rexec API:
+
+### SSH Key Management
+
+```
+POST   /api/ssh-keys           # Register new SSH key
+GET    /api/ssh-keys           # List user's SSH keys
+DELETE /api/ssh-keys/:id       # Remove SSH key
+```
+
+### Internal SSH Endpoints
+
+```
+POST   /api/internal/ssh/auth        # Validate SSH key/token
+POST   /api/internal/ssh/session     # Create session for SSH user
+GET    /api/internal/ssh/terminals   # List terminals for SSH session
+```
+
+## Deployment
+
+### Docker Compose
+
+Add to your `docker-compose.yml`:
+
+```yaml
+rexec-ssh:
+  build:
+    context: .
+    dockerfile: Dockerfile.ssh
+  ports:
+    - "2222:2222"
+  volumes:
+    - ./ssh_host_key:/etc/rexec/ssh_host_key:ro
+  environment:
+    - SSH_GATEWAY_API_URL=http://rexec-api:8080
+    - SSH_GATEWAY_MAX_CONNECTIONS=1000
+  depends_on:
+    - rexec-api
+```
+
+### Systemd Service
+
+Create `/etc/systemd/system/rexec-ssh.service`:
+
+```ini
+[Unit]
+Description=Rexec SSH Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=rexec
+WorkingDirectory=/opt/rexec
+EnvironmentFile=/etc/rexec/gateway.env
+ExecStart=/usr/local/bin/rexec-ssh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Start the service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable rexec-ssh
+sudo systemctl start rexec-ssh
+sudo systemctl status rexec-ssh
+```
+
+### Port 22 Access
+
+To use the default SSH port (22):
+
+<Tabs>
+  <Tab title="iptables Redirect">
+    ```bash
+    # Run gateway on 2222, redirect 22 → 2222
+    sudo iptables -t nat -A PREROUTING -p tcp --dport 22 -j REDIRECT --to-port 2222
+    ```
+  </Tab>
+
+  <Tab title="HAProxy">
+    ```haproxy
+    frontend ssh_front
+        bind *:22
+        mode tcp
+        default_backend ssh_back
+
+    backend ssh_back
+        mode tcp
+        server gateway 127.0.0.1:2222
+    ```
+  </Tab>
+
+  <Tab title="Run as Root">
+    ```bash
+    # Not recommended in production
+    sudo rexec-ssh --port 22
+    ```
+  </Tab>
+</Tabs>
+
+### DNS Setup
+
+Configure DNS for easy access:
+
+```
+rexec.io.       IN A     203.0.113.10
+ssh.rexec.io.   IN CNAME rexec.io.
+```
+
+Users can then connect:
+
+```bash
+ssh rexec.io
+ssh ssh.rexec.io
+```
+
+## Security
+
+### Threat Mitigation
+
+| Concern | Mitigation |
+|---------|------------|
+| **Brute force** | Rate limiting, fail2ban integration, progressive delays |
+| **Anonymous abuse** | Guest sessions limited (1 demo terminal, no agents) |
+| **Key theft** | Keys fingerprinted; users can revoke; last-used tracking |
+| **Session hijacking** | Sessions tied to SSH connection; auto-expire on disconnect |
+| **Resource exhaustion** | Connection limits, idle timeouts, memory caps per session |
+| **Audit trail** | All connections logged with IP, fingerprint, actions |
+
+### Rate Limiting
+
+Set connection limits per IP:
+
+```bash
+export SSH_GATEWAY_RATE_LIMIT=10      # connections per minute per IP
+export SSH_GATEWAY_BURST=5
+```
+
+### Session Timeouts
+
+Auto-disconnect idle sessions:
+
+```bash
+export SSH_GATEWAY_SESSION_TIMEOUT=24h  # Max session duration
+export SSH_GATEWAY_IDLE_TIMEOUT=30m     # Idle timeout
+```
+
+### Audit Logging
+
+All connections are logged with:
+- IP address
+- SSH key fingerprint
+- User actions
+- Terminal access
+- Timestamps
+
+## Monitoring
+
+### Health Check
+
+The gateway exposes a health endpoint (planned):
+
+```bash
+curl http://localhost:9090/health
+```
+
+### Metrics (Prometheus)
+
+Export metrics for monitoring:
+
+- `rexec_ssh_connections_total` - Total connections
+- `rexec_ssh_active_sessions` - Active SSH sessions
+- `rexec_ssh_auth_attempts_total` - Auth attempts by status
+- `rexec_ssh_terminal_connections_total` - Terminal bridge connections
+
+### Logs
+
+View logs:
+
+```bash
+# Systemd
+sudo journalctl -u rexec-ssh -f
+
+# Docker
+docker logs -f rexec-ssh
+
+# Direct
+./rexec-ssh 2>&1 | tee gateway.log
+```
+
+## Troubleshooting
+
+### Connection Refused
+
+**Check if gateway is running**:
+
+```bash
+sudo systemctl status rexec-ssh
+ss -tuln | grep 2222
+```
+
+### Key Not Accepted
+
+**Verify SSH key exists**:
+
+```bash
+ls -la ~/.ssh/id_*.pub
+```
+
+**Generate new key if needed**:
+
+```bash
+ssh-keygen -t ed25519 -C "your@email.com"
+```
+
+### Permission Denied
+
+**Check host key file**:
+
+```bash
+ls -la ~/.ssh/rexec_host_key
+chmod 600 ~/.ssh/rexec_host_key
+```
+
+### TUI Not Loading
+
+**Verify API connectivity**:
+
+```bash
+curl http://localhost:8080/api/profile \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Port Already in Use
+
+**Find conflicting process**:
+
+```bash
+sudo lsof -i :2222
+```
+
+**Use different port**:
+
+```bash
+rexec-ssh --port 2223
+```
+
+## Source Code
+
+The SSH gateway is implemented in:
+
+**File**: `cmd/rexec-ssh/main.go` (109 lines)
+
+```go
+// Key components:
+// - Wish server setup
+// - Public key handler (accepts all)
+// - Password handler (token auth)
+// - Bubble Tea middleware
+// - Graceful shutdown
+```
+
+**Gateway Package**: `internal/ssh/gateway/` (planned)
+
+- `gateway.go` - Core gateway logic
+- `auth.go` - Authentication handlers
+- `session.go` - Session management
+- `bridge.go` - Terminal bridging
+
+<CardGroup cols={2}>
+  <Card title="View Source" icon="code" href="https://github.com/PipeOpsHQ/rexec/blob/main/cmd/rexec-ssh/main.go">
+    Browse the SSH gateway source
+  </Card>
+  <Card title="Wish Docs" icon="book" href="https://github.com/charmbracelet/wish">
+    Learn about Wish SSH framework
+  </Card>
+</CardGroup>
+
+## Roadmap
+
+Planned features:
+
+- **SSH tunneling** - Port forwarding support
+- **SCP/SFTP** - File transfers
+- **Multi-session** - tmux-style multiplexing
+- **Session sharing** - Pair programming
+- **Git over SSH** - `git clone ssh://rexec.io/snippets/repo`
+- **Mobile SSH** - Termux, Blink, Prompt support
+
+## Success Metrics
+
+| Metric | Target |
+|--------|--------|
+| Time to first dashboard | < 2 seconds |
+| Terminal connect latency | < 500ms |
+| Concurrent SSH sessions | 1000+ |
+| Auth success rate | > 99.9% |
+| Session recording coverage | 100% (when enabled) |
+
+## Comparison: SSH vs Other Access Methods
+
+| Feature | SSH Gateway | Web UI | CLI |
+|---------|-------------|--------|-----|
+| **Installation** | None | Browser | Binary install |
+| **Works on** | Any SSH client | Modern browsers | Linux/macOS/Win |
+| **Mobile** | Yes (Termux, etc.) | Yes | Limited |
+| **Behind firewall** | Outbound SSH | Outbound HTTPS | Outbound HTTPS |
+| **TUI** | Built-in | N/A | Separate binary |
+| **Best for** | Instant access | Visual workflows | Automation |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="TUI Dashboard" icon="window" href="/tools/tui">
+    Learn about the Bubble Tea TUI
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/tools/cli">
+    Explore the rexec-cli tool
+  </Card>
+  <Card title="Deploy Rexec" icon="rocket" href="/deployment/docker">
+    Self-host your instance
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/reference">
+    View API endpoints
+  </Card>
+</CardGroup>

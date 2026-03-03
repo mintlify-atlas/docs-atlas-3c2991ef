@@ -1,0 +1,470 @@
+---
+title: SDK Authentication
+description: Set up API tokens and secure authentication for Rexec SDKs
+---
+
+All Rexec SDKs use API tokens for authentication. This guide covers how to generate, manage, and securely use API tokens in your applications.
+
+## How Authentication Works
+
+Rexec uses **JWT-based API tokens** for authentication:
+
+1. You generate a token from the Rexec dashboard
+2. The token is sent with every API request in the `Authorization` header
+3. The server validates the token and processes your request
+
+<Info>
+  All API requests are made over HTTPS to ensure your tokens are encrypted in transit.
+</Info>
+
+## Generating an API Token
+
+<Steps>
+  <Step title="Access the Dashboard">
+    Log in to your Rexec instance at your instance URL
+  </Step>
+  
+  <Step title="Navigate to Settings">
+    Go to **Settings** → **API Tokens**
+  </Step>
+  
+  <Step title="Generate a New Token">
+    Click **Generate Token** and optionally provide a descriptive name
+  </Step>
+  
+  <Step title="Copy the Token">
+    **Important:** Copy the token immediately. You won't be able to see it again!
+  </Step>
+</Steps>
+
+<Warning>
+  API tokens grant full access to your Rexec account. Treat them like passwords and never share them publicly.
+</Warning>
+
+## Using Tokens in SDKs
+
+### Environment Variables (Recommended)
+
+The most secure way to use API tokens is through environment variables:
+
+```bash
+export REXEC_URL="https://your-instance.com"
+export REXEC_TOKEN="rexec_abc123def456..."
+```
+
+Then reference them in your code:
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    import rexec "github.com/PipeOpsHQ/rexec-go"
+
+    client := rexec.NewClient(
+        os.Getenv("REXEC_URL"),
+        os.Getenv("REXEC_TOKEN"),
+    )
+    ```
+  </Tab>
+  
+  <Tab title="JavaScript">
+    ```typescript
+    import { RexecClient } from '@pipeopshq/rexec';
+
+    const client = new RexecClient({
+      baseURL: process.env.REXEC_URL,
+      token: process.env.REXEC_TOKEN,
+    });
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    import os
+    from rexec import RexecClient
+
+    client = RexecClient(
+        base_url=os.environ["REXEC_URL"],
+        token=os.environ["REXEC_TOKEN"]
+    )
+    ```
+  </Tab>
+  
+  <Tab title="Rust">
+    ```rust
+    use rexec::RexecClient;
+
+    let client = RexecClient::new(
+        std::env::var("REXEC_URL")?,
+        std::env::var("REXEC_TOKEN")?
+    )?;
+    ```
+  </Tab>
+  
+  <Tab title="Ruby">
+    ```ruby
+    require 'rexec'
+
+    client = Rexec::Client.new(
+      ENV['REXEC_URL'],
+      ENV['REXEC_TOKEN']
+    )
+    ```
+  </Tab>
+  
+  <Tab title="Java">
+    ```java
+    import io.pipeops.rexec.RexecClient;
+
+    RexecClient client = new RexecClient(
+        System.getenv("REXEC_URL"),
+        System.getenv("REXEC_TOKEN")
+    );
+    ```
+  </Tab>
+  
+  <Tab title=".NET">
+    ```csharp
+    using Rexec;
+
+    var client = new RexecClient(
+        Environment.GetEnvironmentVariable("REXEC_URL"),
+        Environment.GetEnvironmentVariable("REXEC_TOKEN")
+    );
+    ```
+  </Tab>
+  
+  <Tab title="PHP">
+    ```php
+    use Rexec\RexecClient;
+
+    $client = new RexecClient(
+        getenv('REXEC_URL'),
+        getenv('REXEC_TOKEN')
+    );
+    ```
+  </Tab>
+</Tabs>
+
+### Using .env Files
+
+For local development, use a `.env` file:
+
+```bash .env
+REXEC_URL=https://your-instance.com
+REXEC_TOKEN=rexec_abc123def456...
+```
+
+Then load it with your language's environment loader:
+
+<CodeGroup>
+```bash Shell
+# Source it before running your app
+source .env
+node app.js
+```
+
+```javascript JavaScript (dotenv)
+require('dotenv').config();
+const client = new RexecClient({
+  baseURL: process.env.REXEC_URL,
+  token: process.env.REXEC_TOKEN,
+});
+```
+
+```python Python (python-dotenv)
+from dotenv import load_dotenv
+load_dotenv()
+
+client = RexecClient(
+    base_url=os.environ["REXEC_URL"],
+    token=os.environ["REXEC_TOKEN"]
+)
+```
+
+```ruby Ruby (dotenv)
+require 'dotenv/load'
+
+client = Rexec::Client.new(
+  ENV['REXEC_URL'],
+  ENV['REXEC_TOKEN']
+)
+```
+</CodeGroup>
+
+<Warning>
+  **Never commit `.env` files to version control!** Add `.env` to your `.gitignore`.
+</Warning>
+
+## Token Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Environment Variables" icon="shield-check">
+    Never hardcode tokens in your source code
+  </Card>
+  <Card title="Add to .gitignore" icon="git">
+    Prevent tokens from being committed to version control
+  </Card>
+  <Card title="Use Secrets Management" icon="vault">
+    In production, use services like AWS Secrets Manager, HashiCorp Vault, or Azure Key Vault
+  </Card>
+  <Card title="Rotate Tokens Regularly" icon="rotate">
+    Generate new tokens periodically and revoke old ones
+  </Card>
+  <Card title="Limit Token Scope" icon="lock">
+    Use separate tokens for different applications or environments
+  </Card>
+  <Card title="Monitor Token Usage" icon="chart-line">
+    Track API usage to detect unauthorized access
+  </Card>
+</CardGroup>
+
+## Secret Management in Production
+
+### AWS Secrets Manager
+
+```python Python + AWS
+import boto3
+import json
+from rexec import RexecClient
+
+def get_secret():
+    client = boto3.client('secretsmanager', region_name='us-east-1')
+    secret = client.get_secret_value(SecretId='rexec/api-token')
+    return json.loads(secret['SecretString'])
+
+secrets = get_secret()
+client = RexecClient(
+    base_url=secrets['url'],
+    token=secrets['token']
+)
+```
+
+### HashiCorp Vault
+
+```go Go + Vault
+import (
+    vault "github.com/hashicorp/vault/api"
+    rexec "github.com/PipeOpsHQ/rexec-go"
+)
+
+func getClient() (*rexec.Client, error) {
+    vaultClient, _ := vault.NewClient(vault.DefaultConfig())
+    secret, _ := vaultClient.Logical().Read("secret/data/rexec")
+    
+    data := secret.Data["data"].(map[string]interface{})
+    
+    return rexec.NewClient(
+        data["url"].(string),
+        data["token"].(string),
+    ), nil
+}
+```
+
+### Kubernetes Secrets
+
+```yaml k8s-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rexec-credentials
+type: Opaque
+stringData:
+  url: https://your-instance.com
+  token: rexec_abc123def456...
+```
+
+```yaml deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  template:
+    spec:
+      containers:
+      - name: app
+        image: my-app:latest
+        env:
+        - name: REXEC_URL
+          valueFrom:
+            secretKeyRef:
+              name: rexec-credentials
+              key: url
+        - name: REXEC_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: rexec-credentials
+              key: token
+```
+
+## Revoking Tokens
+
+If a token is compromised:
+
+<Steps>
+  <Step title="Go to Settings → API Tokens">
+    Access the token management page
+  </Step>
+  
+  <Step title="Find the compromised token">
+    Identify the token by name or creation date
+  </Step>
+  
+  <Step title="Click Revoke">
+    Immediately invalidate the token
+  </Step>
+  
+  <Step title="Generate a new token">
+    Create a replacement token for legitimate services
+  </Step>
+  
+  <Step title="Update your applications">
+    Deploy the new token to all services using the old one
+  </Step>
+</Steps>
+
+<Warning>
+  Revoking a token immediately invalidates it. Any applications using that token will stop working.
+</Warning>
+
+## Error Handling
+
+All SDKs provide structured error handling for authentication failures:
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    container, err := client.Containers.Get(ctx, "invalid-id")
+    if err != nil {
+        if apiErr, ok := err.(*rexec.APIError); ok {
+            if apiErr.StatusCode == 401 {
+                fmt.Println("Authentication failed - check your token")
+            }
+        }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="JavaScript">
+    ```typescript
+    try {
+      await client.containers.get('invalid-id');
+    } catch (error) {
+      if (error instanceof RexecError && error.statusCode === 401) {
+        console.error('Authentication failed - check your token');
+      }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    from rexec import RexecException
+
+    try:
+        container = await client.containers.get("invalid-id")
+    except RexecException as e:
+        if e.status_code == 401:
+            print("Authentication failed - check your token")
+    ```
+  </Tab>
+  
+  <Tab title="Rust">
+    ```rust
+    match client.containers().get("invalid-id").await {
+        Err(rexec::Error::Api { status, .. }) if status == 401 => {
+            eprintln!("Authentication failed - check your token");
+        }
+        Err(e) => eprintln!("Error: {}", e),
+        Ok(_) => {}
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Common Authentication Errors
+
+<AccordionGroup>
+  <Accordion title="401 Unauthorized">
+    **Cause:** Invalid or expired token
+    
+    **Solution:** 
+    - Verify your token is correct
+    - Check if the token has been revoked
+    - Generate a new token if needed
+  </Accordion>
+  
+  <Accordion title="403 Forbidden">
+    **Cause:** Token doesn't have permission for this action
+    
+    **Solution:**
+    - Check token permissions in the dashboard
+    - Generate a token with appropriate scope
+  </Accordion>
+  
+  <Accordion title="Connection refused">
+    **Cause:** Wrong REXEC_URL or network issue
+    
+    **Solution:**
+    - Verify your instance URL is correct
+    - Check network connectivity
+    - Ensure the instance is running
+  </Accordion>
+  
+  <Accordion title="SSL certificate errors">
+    **Cause:** Self-signed certificate or HTTPS misconfiguration
+    
+    **Solution:**
+    - Use a proper SSL certificate
+    - Configure your SDK to trust self-signed certs (development only)
+  </Accordion>
+</AccordionGroup>
+
+## Rate Limits
+
+API requests are rate-limited to ensure fair usage:
+
+| Resource | Limit |
+|----------|-------|
+| Container creation | 10 per minute |
+| API requests | 100 per minute |
+| WebSocket connections | 5 concurrent per user |
+
+<Info>
+  Rate limits are per API token. If you hit rate limits, implement exponential backoff in your application.
+</Info>
+
+## Testing Authentication
+
+Verify your token works:
+
+```bash cURL
+curl -H "Authorization: Bearer $REXEC_TOKEN" \
+  $REXEC_URL/api/profile
+```
+
+Expected response:
+```json
+{
+  "id": "user-123",
+  "email": "you@example.com",
+  "name": "Your Name"
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start Guide" icon="rocket" href="/sdks/quickstart">
+    Build your first SDK integration
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    Explore all available endpoints
+  </Card>
+  <Card title="Error Handling" icon="shield-check" href="/guides/error-handling">
+    Implement robust error handling
+  </Card>
+  <Card title="Security Best Practices" icon="lock" href="/guides/security">
+    Learn about securing your Rexec integration
+  </Card>
+</CardGroup>
